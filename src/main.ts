@@ -87,6 +87,7 @@ async function runOne(
     model,
     repoLabel: slug,
     ndjsonPath,
+    startingRef: prepared.harnessCommit,
   });
   let capture = started.capture;
   if (isUsageLimit(capture.error)) {

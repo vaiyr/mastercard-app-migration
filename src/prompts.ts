@@ -1,13 +1,24 @@
+import { readFileSync } from "node:fs";
 import type { Setup } from "./types.js";
+
+const BOOTSTRAP_SCRIPT = readFileSync(
+  new URL("../harness/cursor/bootstrap-jdks.sh", import.meta.url),
+  "utf8",
+);
 
 export function promptFor(setup: Setup, target: string, budget: number): string {
   if (setup === "env") {
     return [
-      "Environment check only. Do not edit, create, or delete any file. Do not commit.",
-      "Run these commands and include their full output in your reply:",
+      "Environment check only. Do not edit, create, or delete any repository file. Do not commit.",
+      "If /opt/java/temurin-8 or /opt/java/temurin-17 is missing, install Temurin 8 (1.8.0_432), Temurin 17 (17.0.13), and Maven 3.9.6.",
+      "Save the script below as /tmp/bootstrap-jdks.sh (outside the repository) and run it with bash.",
+      "This is a runtime install because the environment image was not selected.",
+      "Script:",
+      BOOTSTRAP_SCRIPT.trimEnd(),
+      "Then run these commands and include their full output in your reply:",
       "1. JAVA_HOME=/opt/java/temurin-8 mvn -v",
       "2. JAVA_HOME=/opt/java/temurin-17 mvn -v",
-      "Then stop.",
+      "Use /opt/maven/bin/mvn when mvn is not on PATH. Then stop.",
     ].join("\n");
   }
   const lookup =
@@ -17,6 +28,7 @@ export function promptFor(setup: Setup, target: string, budget: number): string 
   return [
     `Migrate this Maven project to Java ${target}.`,
     "Follow AGENTS.md and the java17-migration skill.",
+    "If /opt/java/temurin-8, /opt/java/temurin-17, or /opt/maven/bin/mvn is missing, run bash .cursor/bootstrap-jdks.sh before migrating. That installs Temurin 8 (1.8.0_432), Temurin 17 (17.0.13), and Maven 3.9.6.",
     lookup,
     "Do not delete, skip, or rename tests. Do not downgrade a dependency.",
     `The check is: JAVA_HOME=/opt/java/temurin-${target === "21" ? "17" : target} mvn -B clean verify`,

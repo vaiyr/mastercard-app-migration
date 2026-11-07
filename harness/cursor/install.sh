@@ -3,6 +3,8 @@
 # A missing JDK or Maven fails the Build. A failing resolve does not.
 set -euo pipefail
 
+bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bootstrap-jdks.sh"
+
 export PATH="/opt/maven/bin:${PATH}"
 
 check_jdk() {

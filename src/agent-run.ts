@@ -60,6 +60,7 @@ export async function runCloudAgent(input: {
   ndjsonPath: string;
   retryFailure?: string;
   resumeId?: string;
+  startingRef?: string;
 }): Promise<{ agent: SDKAgent; capture: RunCapture }> {
   const model = selectionFrom(input.model);
   const agent = input.resumeId
@@ -72,7 +73,7 @@ export async function runCloudAgent(input: {
         name: `harness-${input.setup}-${input.repoLabel}`.slice(0, 80),
         mcpServers: mcpServers(input.setup),
         cloud: {
-          repos: [{ url: input.forkUrl, startingRef: "main" }],
+          repos: [{ url: input.forkUrl, startingRef: input.startingRef ?? "main" }],
           autoCreatePR: false,
           metadata: {
             setup: input.setup,
