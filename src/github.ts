@@ -46,25 +46,74 @@ async function request(
   };
 }
 
+export function newRepoBody(name: string): {
+  name: string;
+  private: true;
+  auto_init: false;
+  description: string;
+} {
+  return {
+    name,
+    private: true,
+    auto_init: false,
+    description: "Fork used by the Java migration harness",
+  };
+}
+
+/** PATCH a public fork to private, then read it back. Already-private repos are left as they are. */
+export async function makePrivate(
+  token: string,
+  owner: string,
+  name: string,
+  body: string,
+): Promise<boolean> {
+  let parsed: { private?: boolean } = {};
+  try {
+    parsed = JSON.parse(body) as { private?: boolean };
+  } catch {
+    parsed = {};
+  }
+  if (parsed.private !== true) {
+    const patched = await request(token, "PATCH", `/repos/${owner}/${name}`, { private: true });
+    if (patched.status !== 200) {
+      throw new Error(
+        `Could not make ${owner}/${name} private (${patched.status}). ${patched.body.slice(0, 200)}`,
+      );
+    }
+  }
+  const check = await request(token, "GET", `/repos/${owner}/${name}`);
+  let confirmed: { private?: boolean } = {};
+  try {
+    confirmed = JSON.parse(check.body) as { private?: boolean };
+  } catch {
+    confirmed = {};
+  }
+  if (check.status !== 200 || confirmed.private !== true) {
+    throw new Error(`${owner}/${name} is not private after the visibility update`);
+  }
+  return parsed.private !== true;
+}
+
 export async function ensureRepo(
   token: string,
   owner: string,
   name: string,
 ): Promise<string> {
   const existing = await request(token, "GET", `/repos/${owner}/${name}`);
-  if (existing.status === 200) return `https://github.com/${owner}/${name}`;
+  if (existing.status === 200) {
+    await makePrivate(token, owner, name, existing.body);
+    return `https://github.com/${owner}/${name}`;
+  }
   const ownerInfo = await fetch(`https://api.github.com/users/${owner}`, {
     headers: { "User-Agent": "migration-harness", Accept: "application/vnd.github+json" },
   });
   const ownerBody = (await ownerInfo.json()) as { type?: string };
   const path = ownerBody.type === "Organization" ? `/orgs/${owner}/repos` : "/user/repos";
-  const created = await request(token, "POST", path, {
-    name,
-    private: false,
-    auto_init: false,
-    description: "Fork used by the Java migration harness",
-  });
-  if (created.status === 201) return `https://github.com/${owner}/${name}`;
+  const created = await request(token, "POST", path, newRepoBody(name));
+  if (created.status === 201) {
+    await makePrivate(token, owner, name, created.body);
+    return `https://github.com/${owner}/${name}`;
+  }
   const detail = created.permissions
     ? ` Missing permission: ${created.permissions}.`
     : "";
@@ -122,6 +171,24 @@ export async function commitDescendsFrom(
   if (response.status !== 200) return false;
   const body = JSON.parse(response.body) as { status?: string };
   return body.status === "ahead" || body.status === "identical";
+}
+
+export async function repoFileText(
+  token: string,
+  owner: string,
+  name: string,
+  filePath: string,
+  ref: string,
+): Promise<string | null> {
+  const response = await request(
+    token,
+    "GET",
+    `/repos/${owner}/${name}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+  );
+  if (response.status !== 200) return null;
+  const body = JSON.parse(response.body) as { content?: string; encoding?: string };
+  if (body.encoding !== "base64" || !body.content) return null;
+  return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
 }
 
 export async function repoHasFile(

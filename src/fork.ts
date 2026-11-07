@@ -7,6 +7,7 @@ import {
   commitDescendsFrom,
   defaultBranchCommit,
   ensureRepo,
+  repoFileText,
   repoHasFile,
   scrub,
   type RemoteCommit,
@@ -49,7 +50,9 @@ export function reusableHarnessCommit(input: {
   baseCommit: string;
   hasHarnessFile: boolean;
   descendsFromBase?: boolean;
+  sameSetup?: boolean;
 }): string | null {
+  if (input.sameSetup === false) return null;
   if (!input.remote || !input.hasHarnessFile) return null;
   const onBase =
     input.remote.sha === input.baseCommit ||
@@ -94,14 +97,25 @@ export async function prepareFork(input: {
           existing.sha,
         )
       : false;
+  const recordedSetup =
+    existing !== null && hasHarnessFile
+      ? await repoFileText(
+          input.token,
+          input.owner,
+          input.forkName,
+          ".cursor/harness-setup",
+          existing.sha,
+        )
+      : null;
   const reuse = reusableHarnessCommit({
     remote: existing,
     baseCommit: input.repo.baseCommit,
     hasHarnessFile,
     descendsFromBase,
+    sameSetup: (recordedSetup ?? "").trim() === input.setup,
   });
   if (reuse) {
-    await git(["clone", "--no-tags", forkUrl, checkout], input.workRoot, input.token);
+    await git(["clone", "--no-tags", authedRemote(forkUrl, input.token), checkout], input.workRoot, input.token);
     await git(["checkout", "--detach", reuse], checkout, input.token);
     return { forkUrl, checkout, harnessCommit: reuse };
   }
@@ -113,6 +127,12 @@ export async function prepareFork(input: {
   await git(["checkout", "--detach", input.repo.baseCommit], checkout, input.token);
   await git(["checkout", "-B", "main"], checkout, input.token);
   await injectHarness(checkout, input.setup, input.target);
+  if (input.setup === "h2") {
+    await execFileAsync("python3", ["tools/deps-prepass.py"], {
+      cwd: checkout,
+      timeout: 60_000,
+    });
+  }
   await git(["add", "-A"], checkout, input.token);
   await git(
     ["commit", "-m", "Add the migration harness environment"],
@@ -121,6 +141,9 @@ export async function prepareFork(input: {
   );
   const harnessCommit = (await git(["rev-parse", "HEAD"], checkout, input.token)).trim();
   const remote = authedRemote(forkUrl, input.token);
-  await git(["push", "--set-upstream", remote, "main"], checkout, input.token);
+  const pushArgs = ["push", "--set-upstream"];
+  if (existing) pushArgs.push(`--force-with-lease=main:${existing.sha}`);
+  pushArgs.push(remote, "main");
+  await git(pushArgs, checkout, input.token);
   return { forkUrl, checkout, harnessCommit };
 }

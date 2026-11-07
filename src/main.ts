@@ -1,17 +1,49 @@
 import { IntegrationNotConnectedError } from "@cursor/sdk";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isUsageLimit, pollChargedCents, runCloudAgent } from "./agent-run.js";
+import { isUsageLimit, pollChargedCents, runCloudAgent, stopRemainingRepos } from "./agent-run.js";
 import { parseArgs } from "./cli.js";
 import { fetchFork, sourceDiff } from "./diff.js";
 import { ensureEvaluatorReady, runEval } from "./evaluate.js";
 import { prepareFork } from "./fork.js";
 import { githubToken } from "./github.js";
+import { captureMavenErrors } from "./maven-errors.js";
 import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
 import { reportRepo, writeReport, type MigrationReport } from "./report.js";
 import type { RepoRef } from "./types.js";
-import { envProofGap, parseEvalLog } from "./verdict.js";
+import { fetchTeamUsage } from "./team-usage.js";
+import type { UsageSnapshot } from "./usage.js";
+import { envProofGap, parseEvalLog, type ParsedVerdict } from "./verdict.js";
+
+function usageFields(
+  usage: UsageSnapshot,
+): Pick<MigrationReport, "chargedCents" | "rawCostCents" | "costSettled" | "getUsage" | "tokens"> {
+  return {
+    chargedCents: usage.chargedCents,
+    rawCostCents: usage.rawCostCents,
+    costSettled: usage.costSettled,
+    getUsage: usage.getUsage,
+    tokens: usage.tokens,
+  };
+}
+
+function unfinishedVerdict(note: string): ParsedVerdict {
+  return {
+    maximal: null,
+    minimal: null,
+    buildSuccess: null,
+    testCount: null,
+    r1: null,
+    r2: null,
+    r3: null,
+    r4: null,
+    r5: null,
+    r1r2Combined: false,
+    dependencyFailures: [],
+    notes: [note],
+  };
+}
 
 function outRoot(): string {
   return process.env.HARNESS_OUT || path.resolve("out");
@@ -54,6 +86,7 @@ async function runOne(
   repo: RepoRef,
   options: ReturnType<typeof parseArgs>,
   model: Awaited<ReturnType<typeof pinModel>>,
+  halt: () => void,
 ): Promise<MigrationReport> {
   const owner = process.env.HARNESS_FORK_OWNER;
   if (!owner) throw new Error("Set HARNESS_FORK_OWNER to the neutral GitHub account that will hold forks");
@@ -79,6 +112,13 @@ async function runOne(
     workRoot: workRoot(),
   });
   const ndjsonPath = path.join(dir, "run.ndjson");
+  let mavenErrors: string | undefined;
+  if (options.setup === "h2" && process.env.HARNESS_ERROR_PREPASS === "1") {
+    const captured = await captureMavenErrors(prepared.checkout);
+    await writeFile(path.join(dir, "maven-prepass.log"), captured.full);
+    mavenErrors = captured.errors;
+    await writeFile(path.join(dir, "maven-prepass-errors.txt"), `${captured.errors}\n`);
+  }
   const started = await runCloudAgent({
     forkUrl: prepared.forkUrl,
     setup: options.setup,
@@ -88,25 +128,46 @@ async function runOne(
     repoLabel: slug,
     ndjsonPath,
     startingRef: prepared.harnessCommit,
+    mavenErrors,
   });
   let capture = started.capture;
   if (isUsageLimit(capture.error)) {
+    halt();
+    const limitedUsage = await pollChargedCents(started.agent, { waitForCost: false });
     await started.agent.close();
-    throw new Error(capture.error);
+    const report: MigrationReport = {
+      ...reportRepo(repo),
+      forkUrl: prepared.forkUrl,
+      harnessCommit: prepared.harnessCommit,
+      agentId: capture.agentId,
+      agentUrl: capture.agentUrl,
+      runId: capture.runId,
+      branch: capture.branch,
+      model,
+      startedAt: capture.startedAt,
+      endedAt: capture.endedAt,
+      setup: options.setup,
+      target: options.target,
+      calls: capture.calls,
+      minutes: Number(capture.minutes.toFixed(3)),
+      ...usageFields(limitedUsage),
+      teamUsage: await fetchTeamUsage(capture.agentId, capture.startedAt, capture.endedAt),
+      verdict: unfinishedVerdict("Stopped before grading because usage_limit_exceeded."),
+      dependencies: { before: [], after: [] },
+      ndjsonPath,
+      error: capture.error,
+    };
+    await writeReport(dir, report);
+    return report;
   }
-  const usage = await pollChargedCents(started.agent).catch((error: unknown) => ({
-    chargedCents: null,
-    rawCostCents: null,
-    settled: false,
-    error: error instanceof Error ? error.message : String(error),
-  }));
+  let usage = await pollChargedCents(started.agent);
 
   let head = prepared.harnessCommit;
   if (capture.branch) {
     await fetchFork(prepared.checkout, prepared.forkUrl, token);
     head = `fork/${capture.branch}`;
   }
-  const diffText =
+  let diffText =
     options.setup === "env"
       ? ""
       : await sourceDiff(prepared.checkout, repo.baseCommit, head).catch(() => "");
@@ -133,11 +194,19 @@ async function runOne(
         });
   let verdict = parseEvalLog(maximal.log, minimal?.log);
   verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
+  let verdictBeforeRetry: ParsedVerdict | undefined;
+  let reportRetryWindow: { retryStartedAt: string; retryEndedAt: string } | undefined;
   const evalLogPath = path.join(dir, "eval.log");
   await writeFile(evalLogPath, [maximal.log, minimal?.log ?? ""].join("\n----- minimal -----\n"));
 
   if (options.retry && options.setup !== "env" && verdict.maximal === false && !capture.error) {
+    verdictBeforeRetry = verdict;
     const failureList = [
+      `r1=${String(verdict.r1)}`,
+      `r2=${String(verdict.r2)}`,
+      `r3=${String(verdict.r3)}`,
+      `r4=${String(verdict.r4)}`,
+      `r5=${String(verdict.r5)}`,
       `maximal=${String(verdict.maximal)}`,
       `minimal=${String(verdict.minimal)}`,
       `buildSuccess=${String(verdict.buildSuccess)}`,
@@ -155,11 +224,51 @@ async function runOne(
       retryFailure: failureList,
       resumeId: started.agent.agentId,
     });
+    const firstStartedAt = capture.startedAt;
+    const firstEndedAt = capture.endedAt;
     capture = {
       ...retried.capture,
       calls: capture.calls + retried.capture.calls,
       minutes: capture.minutes + retried.capture.minutes,
+      startedAt: firstStartedAt,
+      endedAt: firstEndedAt,
     };
+    reportRetryWindow = {
+      retryStartedAt: retried.capture.startedAt,
+      retryEndedAt: retried.capture.endedAt,
+    };
+    if (isUsageLimit(retried.capture.error)) {
+      halt();
+      usage = await pollChargedCents(started.agent, { waitForCost: false });
+    } else if (capture.branch) {
+      await fetchFork(prepared.checkout, prepared.forkUrl, token);
+      head = `fork/${capture.branch}`;
+      diffText = await sourceDiff(prepared.checkout, repo.baseCommit, head).catch(() => "");
+      await writeFile(diffPath, diffText);
+      const retriedMaximal = await runEval({
+        githubUrl: repo.url,
+        baseCommit: repo.baseCommit,
+        diffPath,
+        target: options.target,
+        maximal: true,
+      });
+      const retriedMinimal = await runEval({
+        githubUrl: repo.url,
+        baseCommit: repo.baseCommit,
+        diffPath,
+        target: options.target,
+        maximal: false,
+      });
+      verdict = parseEvalLog(retriedMaximal.log, retriedMinimal.log);
+      verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
+      await writeFile(
+        evalLogPath,
+        [retriedMaximal.log, retriedMinimal.log].join("\n----- minimal -----\n"),
+      );
+      usage = await pollChargedCents(started.agent);
+    } else {
+      usage = await pollChargedCents(started.agent);
+    }
   }
 
   await started.agent.close();
@@ -174,18 +283,21 @@ async function runOne(
     runId: capture.runId,
     branch: capture.branch,
     model,
+    startedAt: capture.startedAt,
+    endedAt: capture.endedAt,
+    ...(reportRetryWindow ?? {}),
     setup: options.setup,
     target: options.target,
     calls: capture.calls,
     minutes: Number(capture.minutes.toFixed(3)),
-    chargedCents: usage.chargedCents,
-    rawCostCents: usage.rawCostCents,
-    costSettled: usage.settled,
+    ...usageFields(usage),
+    teamUsage: await fetchTeamUsage(capture.agentId, capture.startedAt, capture.endedAt),
     verdict,
+    ...(verdictBeforeRetry ? { verdictBeforeRetry } : {}),
     dependencies: { before, after },
     ndjsonPath,
     evalLogPath,
-    error: capture.error ?? ("error" in usage ? usage.error : undefined),
+    error: capture.error ?? usage.error,
   };
   await writeReport(dir, report);
   if (options.setup === "env") {
@@ -206,11 +318,16 @@ async function main(): Promise<void> {
   const repos = await selectRepos(options.setup);
   const reports: MigrationReport[] = [];
   const queue = [...repos];
+  const gate = { stop: false };
+  const halt = () => stopRemainingRepos(queue, gate);
   const workers = Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
     for (;;) {
+      if (gate.stop) return;
       const repo = queue.shift();
       if (!repo) return;
-      reports.push(await runOne(repo, options, model));
+      const report = await runOne(repo, options, model, halt);
+      reports.push(report);
+      if (isUsageLimit(report.error)) return;
     }
   });
   await Promise.all(workers);

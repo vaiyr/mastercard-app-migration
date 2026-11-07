@@ -5,6 +5,9 @@ import { MAX_MINUTES } from "./limits.js";
 import { promptFor, retryPrompt } from "./prompts.js";
 import type { PinnedModel, Setup } from "./types.js";
 import { selectionFrom } from "./model.js";
+import { ensureDockerfileImage } from "./environment.js";
+import { runWindow } from "./time.js";
+import { absentUsage, snapshotFromUsage, type UsageSnapshot } from "./usage.js";
 
 export interface RunCapture {
   agentId: string;
@@ -13,6 +16,8 @@ export interface RunCapture {
   result?: RunResult;
   calls: number;
   minutes: number;
+  startedAt: string;
+  endedAt: string;
   branch?: string;
   prUrl?: string;
   ndjsonPath: string;
@@ -50,6 +55,12 @@ export function isUsageLimit(message: string | undefined): boolean {
   return Boolean(message?.includes("usage_limit_exceeded"));
 }
 
+/** Drop queued repositories after a prepaid-balance stop. In-flight runs are left alone. */
+export function stopRemainingRepos(queue: unknown[], state: { stop: boolean }): void {
+  state.stop = true;
+  queue.length = 0;
+}
+
 export async function runCloudAgent(input: {
   forkUrl: string;
   setup: Setup;
@@ -61,8 +72,20 @@ export async function runCloudAgent(input: {
   retryFailure?: string;
   resumeId?: string;
   startingRef?: string;
+  mavenErrors?: string;
 }): Promise<{ agent: SDKAgent; capture: RunCapture }> {
   const model = selectionFrom(input.model);
+  let envName: string | undefined;
+  if (!input.resumeId) {
+    try {
+      const image = await ensureDockerfileImage(input.forkUrl);
+      envName = image.name;
+      process.stderr.write(`${image.note}\n`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Dockerfile image was not activated: ${message}\n`);
+    }
+  }
   const agent = input.resumeId
     ? await Agent.resume(input.resumeId, {
         model,
@@ -70,21 +93,23 @@ export async function runCloudAgent(input: {
       })
     : await Agent.create({
         model,
-        name: `harness-${input.setup}-${input.repoLabel}`.slice(0, 80),
+        name: `harness-${input.setup}-${input.model.id}-${input.repoLabel}`.slice(0, 80),
         mcpServers: mcpServers(input.setup),
         cloud: {
+          ...(envName ? { env: { type: "cloud" as const, name: envName } } : {}),
           repos: [{ url: input.forkUrl, startingRef: input.startingRef ?? "main" }],
           autoCreatePR: false,
           metadata: {
             setup: input.setup,
             model: input.model.id,
             repo: input.repoLabel,
-            sweep: input.setup === "env" ? "env-proof" : "single",
+            sweep: process.env.HARNESS_SWEEP || (input.setup === "env" ? "env-proof" : input.setup),
           },
         },
       });
 
   const stream = createWriteStream(input.ndjsonPath, { flags: "a" });
+  const observedStart = new Date().toISOString();
   const started = Date.now();
   const seen = new Set<string>();
   let calls = 0;
@@ -97,7 +122,7 @@ export async function runCloudAgent(input: {
   };
   const prompt = input.retryFailure
     ? retryPrompt(input.retryFailure)
-    : promptFor(input.setup, input.target, input.budget);
+    : promptFor(input.setup, input.target, input.budget, input.mavenErrors);
 
   try {
     run = await agent.send(prompt, {
@@ -122,6 +147,10 @@ export async function runCloudAgent(input: {
     }
     const result = await run.wait();
     const located = branchFor(result, input.forkUrl);
+    const window = runWindow(run.createdAt, result.durationMs ?? run.durationMs, {
+      start: observedStart,
+      end: new Date().toISOString(),
+    });
     const capture: RunCapture = {
       agentId: agent.agentId,
       agentUrl: `https://cursor.com/agents/${agent.agentId}`,
@@ -129,6 +158,8 @@ export async function runCloudAgent(input: {
       result,
       calls,
       minutes: (result.durationMs ?? Date.now() - started) / 60_000,
+      startedAt: window.startedAt,
+      endedAt: window.endedAt,
       branch: located.branch,
       prUrl: located.prUrl,
       ndjsonPath: input.ndjsonPath,
@@ -137,6 +168,10 @@ export async function runCloudAgent(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await writeEvent(stream, { kind: "error", message });
+    const window = runWindow(run?.createdAt, run?.durationMs, {
+      start: observedStart,
+      end: new Date().toISOString(),
+    });
     return {
       agent,
       capture: {
@@ -145,6 +180,8 @@ export async function runCloudAgent(input: {
         runId: run?.id ?? "",
         calls,
         minutes: (Date.now() - started) / 60_000,
+        startedAt: window.startedAt,
+        endedAt: window.endedAt,
         ndjsonPath: input.ndjsonPath,
         error: message,
       },
@@ -155,27 +192,23 @@ export async function runCloudAgent(input: {
   }
 }
 
-export async function pollChargedCents(agent: SDKAgent): Promise<{
-  chargedCents: number | null;
-  rawCostCents: number | null;
-  settled: boolean;
-}> {
-  const deadline = Date.now() + 3 * 60_000;
-  let last: Awaited<ReturnType<SDKAgent["getUsage"]>> | undefined;
-  while (Date.now() < deadline) {
-    last = await agent.getUsage();
-    if (last.cost) {
-      return {
-        chargedCents: last.cost.chargedCents,
-        rawCostCents: last.cost.rawCostCents,
-        settled: true,
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 15_000));
+export async function pollChargedCents(
+  agent: SDKAgent,
+  options?: { waitForCost?: boolean },
+): Promise<UsageSnapshot> {
+  const wait = options?.waitForCost !== false;
+  const deadline = Date.now() + (wait ? 3 * 60_000 : 0);
+  let last: unknown;
+  try {
+    do {
+      last = await agent.getUsage();
+      const snapshot = snapshotFromUsage(last);
+      if (snapshot.costSettled || !wait || Date.now() >= deadline) return snapshot;
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+    } while (Date.now() < deadline);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return absentUsage(message);
   }
-  return {
-    chargedCents: last?.cost?.chargedCents ?? null,
-    rawCostCents: last?.cost?.rawCostCents ?? null,
-    settled: Boolean(last?.cost),
-  };
+  return snapshotFromUsage(last);
 }

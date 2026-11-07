@@ -6,7 +6,12 @@ const BOOTSTRAP_SCRIPT = readFileSync(
   "utf8",
 );
 
-export function promptFor(setup: Setup, target: string, budget: number): string {
+export function promptFor(
+  setup: Setup,
+  target: string,
+  budget: number,
+  mavenErrors?: string,
+): string {
   if (setup === "env") {
     return [
       "Environment check only. Do not edit, create, or delete any repository file. Do not commit.",
@@ -24,7 +29,7 @@ export function promptFor(setup: Setup, target: string, budget: number): string 
   const lookup =
     setup === "h1"
       ? "Use the deps-lookup tool before choosing a library version."
-      : "A pre-pass may already have changed pom.xml. Do not expect a lookup server.";
+      : "tools/deps-prepass.py already rewrote pom.xml before this turn. Repair that result. Do not expect a lookup server.";
   return [
     `Migrate this Maven project to Java ${target}.`,
     "Follow AGENTS.md and the java17-migration skill.",
@@ -37,6 +42,13 @@ export function promptFor(setup: Setup, target: string, budget: number): string 
       : "Use the Temurin 17 home above for the verify command.",
     `Stop after ${budget} tool calls or when verify succeeds.`,
     "Do not claim the migration passed. List remaining compiler and test errors.",
+    ...(mavenErrors
+      ? [
+          "Maven was run once on this tree before your first turn. Fix the compiler and test errors below. Do not treat a missing error as permission to skip the file.",
+          "Errors:",
+          mavenErrors,
+        ]
+      : []),
   ].join("\n");
 }
 

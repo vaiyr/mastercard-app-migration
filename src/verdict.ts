@@ -37,6 +37,21 @@ export function envProofGap(ndjson: string, evalLog: string): string | null {
   return `env proof incomplete: java8=${java8} java17=${java17} maven=${maven} grader=${grader}`;
 }
 
+function dependencyFailuresFrom(log: string): string[] {
+  const failures: string[] = [];
+  const pattern =
+    /['"]dependency['"]:\s*['"]([^'"]+)['"](?:[^}\]]*?['"]expected-version['"]:\s*['"]([^'"]+)['"])?(?:[^}\]]*?['"]transformed-version['"]:\s*['"]([^'"]+)['"])?/g;
+  for (const match of log.matchAll(pattern)) {
+    const coordinate = match[1];
+    const expected = match[2];
+    const got = match[3];
+    if (expected && got) failures.push(`${coordinate} expected ${expected} got ${got}`);
+    else if (expected) failures.push(`${coordinate} expected ${expected}`);
+    else failures.push(coordinate);
+  }
+  return failures;
+}
+
 function flag(value: string | undefined): boolean | null {
   if (value === "True") return true;
   if (value === "False") return false;
@@ -53,9 +68,7 @@ export function parseEvalLog(maximalLog: string, minimalLog?: string): ParsedVer
   const buildSuccess = flag(buildMatch?.[1]);
   const testRaw = buildMatch?.[2]?.trim();
   const testCount = testRaw && /^-?\d+$/.test(testRaw) ? Number(testRaw) : null;
-  const dependencyFailures = [
-    ...maximalLog.matchAll(/"dependency": "([^"]+)"/g),
-  ].map((match) => match[1]);
+  const dependencyFailures = dependencyFailuresFrom(maximalLog);
 
   const maximal = flag(maximalMatch?.[1] ?? maximalLog.match(FINAL_LINE)?.[1]);
   const minimal = minimalLog

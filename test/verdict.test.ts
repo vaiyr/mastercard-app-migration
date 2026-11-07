@@ -31,7 +31,23 @@ test("separates a dependency failure from a green build", () => {
   assert.equal(verdict.maximal, false);
   assert.equal(verdict.buildSuccess, true);
   assert.equal(verdict.r5, false);
-  assert.deepEqual(verdict.dependencyFailures, ["org.example:lib"]);
+  assert.deepEqual(verdict.dependencyFailures, ["org.example:lib expected 2.0.0"]);
+});
+
+test("reads the evaluator's single-quoted dependency warning", () => {
+  const maximal = [
+    "[{'dependency': 'org.webjars:bootstrap', 'expected-version': '5.3.3', 'transformed-version': '4.3.1', 'valid-version-update': False}]",
+    "Repo (Build success, #tests) = (True, 39): `/tmp/repo`.",
+    "[single-docker] Migration success (count) `False`: `args`.",
+  ].join("\n");
+  const minimal = [
+    "Repo (Build success, #tests) = (True, 39): `/tmp/repo`.",
+    "[single-docker] Migration success (count) `True`: `args`.",
+  ].join("\n");
+  const verdict = parseEvalLog(maximal, minimal);
+  assert.deepEqual(verdict.dependencyFailures, ["org.webjars:bootstrap expected 5.3.3 got 4.3.1"]);
+  assert.equal(verdict.r5, false);
+  assert.equal(verdict.minimal, true);
 });
 
 test("env proof accepts a grader result of false", () => {
