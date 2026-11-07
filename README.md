@@ -20,7 +20,7 @@ npm run harness -- --setup env|h1|h2 --model <catalog-id> --budget <calls> --con
 
 - Node.js 22.13 or newer
 - `CURSOR_API_KEY` (a service-account key with usage-based billing, so `chargedCents` is not stuck at zero)
-- A GitHub token that can create public repositories (`HARNESS_GITHUB_TOKEN` or `gh auth token`)
+- A GitHub token that can create private repositories (`HARNESS_GITHUB_TOKEN` or `gh auth token`)
 - Docker, for the grader
 - A local clone of [amazon-science/MigrationBench](https://github.com/amazon-science/MigrationBench)
 

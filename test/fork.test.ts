@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { newRepoBody } from "../src/github.js";
 import { reusableHarnessCommit } from "../src/fork.js";
 import { includeCopiedPath } from "../src/inject.js";
 import { isUsageLimit, stopRemainingRepos } from "../src/agent-run.js";
 
 const BASE = "40ca6e2894292c79f2830c9a23531c182f7fe8e4";
 const HARNESS = "7484c6da72b3de9762bf93b7c9db68c58feb6bcc";
+
+test("new forks are created private", () => {
+  assert.equal(newRepoBody("queue-ticket-api").private, true);
+});
 
 test("reuses one harness commit on the pinned base", () => {
   assert.equal(
