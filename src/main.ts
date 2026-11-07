@@ -1,7 +1,7 @@
 import { IntegrationNotConnectedError } from "@cursor/sdk";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { runCloudAgent, pollChargedCents } from "./agent-run.js";
+import { isUsageLimit, pollChargedCents, runCloudAgent } from "./agent-run.js";
 import { parseArgs } from "./cli.js";
 import { fetchFork, sourceDiff } from "./diff.js";
 import { ensureEvaluatorReady, runEval } from "./evaluate.js";
@@ -89,6 +89,10 @@ async function runOne(
     ndjsonPath,
   });
   let capture = started.capture;
+  if (isUsageLimit(capture.error)) {
+    await started.agent.close();
+    throw new Error(capture.error);
+  }
   const usage = await pollChargedCents(started.agent).catch((error: unknown) => ({
     chargedCents: null,
     rawCostCents: null,

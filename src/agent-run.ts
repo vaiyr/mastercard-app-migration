@@ -46,6 +46,10 @@ function branchFor(result: RunResult | undefined, forkUrl: string): { branch?: s
   return { branch: match?.branch, prUrl: match?.prUrl };
 }
 
+export function isUsageLimit(message: string | undefined): boolean {
+  return Boolean(message?.includes("usage_limit_exceeded"));
+}
+
 export async function runCloudAgent(input: {
   forkUrl: string;
   setup: Setup;

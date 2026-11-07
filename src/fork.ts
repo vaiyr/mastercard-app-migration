@@ -2,7 +2,14 @@ import { execFile } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { authedRemote, ensureRepo, scrub } from "./github.js";
+import {
+  authedRemote,
+  defaultBranchCommit,
+  ensureRepo,
+  repoHasFile,
+  scrub,
+  type RemoteCommit,
+} from "./github.js";
 import { injectHarness } from "./inject.js";
 import type { RepoRef, Setup } from "./types.js";
 
@@ -32,6 +39,20 @@ async function git(
   }
 }
 
+/**
+ * Keep a fork whose default branch is already one harness commit on the pinned
+ * base. A second inject would be a different commit and a non-fast-forward push.
+ */
+export function reusableHarnessCommit(input: {
+  remote: RemoteCommit | null;
+  baseCommit: string;
+  hasHarnessFile: boolean;
+}): string | null {
+  if (!input.remote || !input.hasHarnessFile) return null;
+  if (!input.remote.parents.includes(input.baseCommit)) return null;
+  return input.remote.sha;
+}
+
 export async function prepareFork(input: {
   repo: RepoRef;
   forkName: string;
@@ -45,6 +66,26 @@ export async function prepareFork(input: {
   const checkout = path.join(input.workRoot, input.forkName);
   await rm(checkout, { recursive: true, force: true });
   await mkdir(input.workRoot, { recursive: true });
+  const existing = await defaultBranchCommit(input.token, input.owner, input.forkName);
+  const hasHarnessFile = existing
+    ? await repoHasFile(
+        input.token,
+        input.owner,
+        input.forkName,
+        ".cursor/environment.json",
+        existing.sha,
+      )
+    : false;
+  const reuse = reusableHarnessCommit({
+    remote: existing,
+    baseCommit: input.repo.baseCommit,
+    hasHarnessFile,
+  });
+  if (reuse) {
+    await git(["clone", "--no-tags", forkUrl, checkout], input.workRoot, input.token);
+    await git(["checkout", "--detach", reuse], checkout, input.token);
+    return { forkUrl, checkout, harnessCommit: reuse };
+  }
   await git(
     ["clone", "--no-tags", input.repo.url, checkout],
     input.workRoot,

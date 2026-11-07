@@ -6,9 +6,14 @@ import type { Setup } from "./types.js";
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const HARNESS_TEMPLATE = path.join(SRC_ROOT, "harness");
 
+export function includeCopiedPath(source: string): boolean {
+  const base = path.basename(source);
+  return base !== "__pycache__" && !base.endsWith(".pyc");
+}
+
 async function copyTree(from: string, to: string): Promise<void> {
   await mkdir(path.dirname(to), { recursive: true });
-  await cp(from, to, { recursive: true });
+  await cp(from, to, { recursive: true, filter: includeCopiedPath });
 }
 
 export async function loadVersionMap(): Promise<Record<string, string>> {

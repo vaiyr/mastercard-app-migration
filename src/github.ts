@@ -73,6 +73,53 @@ export async function ensureRepo(
   );
 }
 
+export interface RemoteCommit {
+  sha: string;
+  parents: string[];
+}
+
+/** `null` when the repository exists and has no commits yet. */
+export async function defaultBranchCommit(
+  token: string,
+  owner: string,
+  name: string,
+): Promise<RemoteCommit | null> {
+  const response = await request(token, "GET", `/repos/${owner}/${name}/commits/main`);
+  if (response.status === 409 || response.status === 404) return null;
+  if (response.status !== 200) {
+    throw new Error(
+      `Could not read ${owner}/${name}@main (${response.status}). ${response.body.slice(0, 200)}`,
+    );
+  }
+  const body = JSON.parse(response.body) as {
+    sha?: string;
+    parents?: Array<{ sha?: string }>;
+  };
+  const sha = body.sha ?? "";
+  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new Error(`Unexpected commit from ${owner}/${name}@main`);
+  }
+  return {
+    sha,
+    parents: (body.parents ?? []).map((parent) => parent.sha ?? "").filter(Boolean),
+  };
+}
+
+export async function repoHasFile(
+  token: string,
+  owner: string,
+  name: string,
+  filePath: string,
+  ref: string,
+): Promise<boolean> {
+  const response = await request(
+    token,
+    "GET",
+    `/repos/${owner}/${name}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+  );
+  return response.status === 200;
+}
+
 export function authedRemote(forkUrl: string, token: string): string {
   const url = new URL(forkUrl);
   url.username = "x-access-token";
