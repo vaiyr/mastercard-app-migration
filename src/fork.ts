@@ -115,7 +115,7 @@ export async function prepareFork(input: {
     sameSetup: (recordedSetup ?? "").trim() === input.setup,
   });
   if (reuse) {
-    await git(["clone", "--no-tags", forkUrl, checkout], input.workRoot, input.token);
+    await git(["clone", "--no-tags", authedRemote(forkUrl, input.token), checkout], input.workRoot, input.token);
     await git(["checkout", "--detach", reuse], checkout, input.token);
     return { forkUrl, checkout, harnessCommit: reuse };
   }
