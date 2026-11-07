@@ -11,7 +11,7 @@ import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
 import { reportRepo, writeReport, type MigrationReport } from "./report.js";
 import type { RepoRef } from "./types.js";
-import { parseEvalLog } from "./verdict.js";
+import { envProofGap, parseEvalLog } from "./verdict.js";
 
 function outRoot(): string {
   return process.env.HARNESS_OUT || path.resolve("out");
@@ -185,16 +185,9 @@ async function runOne(
   await writeReport(dir, report);
   if (options.setup === "env") {
     const ndjson = await readFile(ndjsonPath, "utf8").catch(() => "");
-    const saw8 = /Java version: 1\.8\.0/.test(ndjson);
-    const saw17 = /Java version: 17\.0/.test(ndjson);
-    const sawMaven = ndjson.split("Apache Maven 3.9.6").length > 2;
-    if (!saw8 || !saw17 || !sawMaven || !maximal.passed) {
-      report.error = [
-        report.error,
-        `env proof incomplete: java8=${saw8} java17=${saw17} maven=${sawMaven} eval=${maximal.passed}`,
-      ]
-        .filter(Boolean)
-        .join("; ");
+    const gap = envProofGap(ndjson, maximal.log);
+    if (gap) {
+      report.error = [report.error, gap].filter(Boolean).join("; ");
       await writeReport(dir, report);
     }
   }
@@ -216,7 +209,6 @@ async function main(): Promise<void> {
     }
   });
   await Promise.all(workers);
-  const failed = reports.filter((report) => report.error || report.verdict.maximal !== true);
   process.stdout.write(`${JSON.stringify({ model, reports: reports.map((report) => ({
     repo: report.repo,
     agentUrl: report.agentUrl,
@@ -225,8 +217,7 @@ async function main(): Promise<void> {
     maximal: report.verdict.maximal,
     error: report.error,
   })) }, null, 2)}\n`);
-  if (options.setup === "env" && failed.length > 0) process.exitCode = 1;
-  if (options.setup !== "env" && reports.some((report) => report.error)) process.exitCode = 1;
+  if (reports.some((report) => report.error)) process.exitCode = 1;
 }
 
 main().catch((error: unknown) => {

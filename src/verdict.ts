@@ -19,6 +19,24 @@ const BUILD_LINE =
   /Repo \(Build success, #tests\) = \((True|False), ([^)]*)\)/;
 const FINAL_LINE = /Final eval for `[^`]*` \([^)]*\): Success = (True|False)\./;
 
+/** True when the evaluator printed a success or failure count, not when the migration passed. */
+export function graderReported(log: string): boolean {
+  return SUCCESS_LINE.test(log) || FINAL_LINE.test(log);
+}
+
+/**
+ * `--setup env` checks that both JDKs printed Maven 3.9.6 and that the grader ran.
+ * An unmigrated tree is graded False. That is a completed check.
+ */
+export function envProofGap(ndjson: string, evalLog: string): string | null {
+  const java8 = /Java version: 1\.8\.0/.test(ndjson);
+  const java17 = /Java version: 17\.0/.test(ndjson);
+  const maven = ndjson.split("Apache Maven 3.9.6").length > 2;
+  const grader = graderReported(evalLog);
+  if (java8 && java17 && maven && grader) return null;
+  return `env proof incomplete: java8=${java8} java17=${java17} maven=${maven} grader=${grader}`;
+}
+
 function flag(value: string | undefined): boolean | null {
   if (value === "True") return true;
   if (value === "False") return false;

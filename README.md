@@ -12,7 +12,7 @@ npm run harness -- --setup env|h1|h2 --model <catalog-id> --budget <calls> --con
 
 `--concurrency` is capped at 5. `--budget` defaults to 80 tool calls. A run also stops at 45 minutes. `--retry` sends the grader failure list back to the same agent once.
 
-`--setup env` checks the image: the agent prints `mvn -v` under both JDKs, and the grader runs on an empty diff. `--setup h1` lets the agent migrate, with a dependency lookup server. `--setup h2` runs `tools/deps-prepass.py` during the environment install and does not attach the lookup server.
+`--setup env` checks the image: the agent prints `mvn -v` under both JDKs, and the grader runs on an empty diff. A result of `False` on that unmigrated tree means the grader ran. `--setup h1` lets the agent migrate, with a dependency lookup server. `--setup h2` runs `tools/deps-prepass.py` during the environment install and does not attach the lookup server.
 
 ## Requirements
 
