@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "python3 .cursor/hooks/guard.py",
+        "failClosed": true,
+        "timeout": 20
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "python3 .cursor/hooks/guard.py",
+        "timeout": 20
+      }
+    ]
+  }
+}
