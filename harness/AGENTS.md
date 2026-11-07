@@ -14,7 +14,7 @@ Read `.cursor/harness-setup`.
 
 - `env`: if a Temurin home is missing, run the installer from the prompt. Then run only the two `mvn -v` commands. Do not edit, create, or delete repository files. Do not commit.
 - `h1`: migrate the project, then verify. Use the `java17-migration` skill and the `deps-lookup` tool before choosing a library version.
-- `h2`: a pre-pass may already have edited `pom.xml`. Repair the build and verify. Do not expect a dependency lookup server.
+- `h2`: `tools/deps-prepass.py` already rewrote `pom.xml`. Repair the build and verify. Do not expect a dependency lookup server.
 
 The Java release to land on is in `.cursor/harness-target`.
 

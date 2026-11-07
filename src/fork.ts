@@ -113,6 +113,12 @@ export async function prepareFork(input: {
   await git(["checkout", "--detach", input.repo.baseCommit], checkout, input.token);
   await git(["checkout", "-B", "main"], checkout, input.token);
   await injectHarness(checkout, input.setup, input.target);
+  if (input.setup === "h2") {
+    await execFileAsync("python3", ["tools/deps-prepass.py"], {
+      cwd: checkout,
+      timeout: 60_000,
+    });
+  }
   await git(["add", "-A"], checkout, input.token);
   await git(
     ["commit", "-m", "Add the migration harness environment"],
