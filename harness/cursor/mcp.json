@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "deps-lookup": {
+      "command": "python3",
+      "args": ["tools/deps-lookup/server.py"]
+    }
+  }
+}

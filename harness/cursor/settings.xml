@@ -1,0 +1,10 @@
+<settings>
+  <localRepository>/var/maven/repository</localRepository>
+  <mirrors>
+    <mirror>
+      <id>central-https</id>
+      <url>https://repo.maven.apache.org/maven2</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>
