@@ -72,6 +72,7 @@ export async function runCloudAgent(input: {
   retryFailure?: string;
   resumeId?: string;
   startingRef?: string;
+  mavenErrors?: string;
 }): Promise<{ agent: SDKAgent; capture: RunCapture }> {
   const model = selectionFrom(input.model);
   let envName: string | undefined;
@@ -121,7 +122,7 @@ export async function runCloudAgent(input: {
   };
   const prompt = input.retryFailure
     ? retryPrompt(input.retryFailure)
-    : promptFor(input.setup, input.target, input.budget);
+    : promptFor(input.setup, input.target, input.budget, input.mavenErrors);
 
   try {
     run = await agent.send(prompt, {

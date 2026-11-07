@@ -7,6 +7,7 @@ import { fetchFork, sourceDiff } from "./diff.js";
 import { ensureEvaluatorReady, runEval } from "./evaluate.js";
 import { prepareFork } from "./fork.js";
 import { githubToken } from "./github.js";
+import { captureMavenErrors } from "./maven-errors.js";
 import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
 import { reportRepo, writeReport, type MigrationReport } from "./report.js";
@@ -111,6 +112,13 @@ async function runOne(
     workRoot: workRoot(),
   });
   const ndjsonPath = path.join(dir, "run.ndjson");
+  let mavenErrors: string | undefined;
+  if (options.setup === "h2" && process.env.HARNESS_ERROR_PREPASS === "1") {
+    const captured = await captureMavenErrors(prepared.checkout);
+    await writeFile(path.join(dir, "maven-prepass.log"), captured.full);
+    mavenErrors = captured.errors;
+    await writeFile(path.join(dir, "maven-prepass-errors.txt"), `${captured.errors}\n`);
+  }
   const started = await runCloudAgent({
     forkUrl: prepared.forkUrl,
     setup: options.setup,
@@ -120,6 +128,7 @@ async function runOne(
     repoLabel: slug,
     ndjsonPath,
     startingRef: prepared.harnessCommit,
+    mavenErrors,
   });
   let capture = started.capture;
   if (isUsageLimit(capture.error)) {

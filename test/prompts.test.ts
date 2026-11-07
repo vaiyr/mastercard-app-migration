@@ -29,4 +29,11 @@ test("h2 prompt starts from the pre-pass rewrite", () => {
   const prompt = promptFor("h2", "17", 80);
   assert.match(prompt, /deps-prepass\.py already rewrote pom\.xml/);
   assert.doesNotMatch(prompt, /deps-lookup tool/);
+  assert.doesNotMatch(prompt, /Maven was run once/);
+});
+
+test("h2 prompt includes one up-front Maven error list", () => {
+  const prompt = promptFor("h2", "17", 80, "[ERROR] cannot find symbol");
+  assert.match(prompt, /\[ERROR\] cannot find symbol/);
+  assert.match(prompt, /Fix the compiler and test errors/);
 });

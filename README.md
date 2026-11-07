@@ -14,7 +14,7 @@ npm run harness -- --setup env|h1|h2 --model <catalog-id> --budget <calls> --con
 
 `--concurrency` is capped at 5. `--budget` defaults to 80 tool calls. A run also stops at 45 minutes. `--retry` sends the grader failure list back to the same agent once.
 
-`--setup env` checks the image: the agent prints `mvn -v` under both JDKs, and the grader runs on an empty diff. If those Temurin homes are missing, the agent installs Temurin 8 (1.8.0_432), Temurin 17 (17.0.13), and Maven 3.9.6 at runtime. The Dockerfile still defines the same pins. A result of `False` on that unmigrated tree means the grader ran. `--setup h1` lets the agent migrate, with a dependency lookup server. `--setup h2` runs `tools/deps-prepass.py` during the environment install and does not attach the lookup server.
+`--setup env` checks the image: the agent prints `mvn -v` under both JDKs, and the grader runs on an empty diff. If those Temurin homes are missing, the agent installs Temurin 8 (1.8.0_432), Temurin 17 (17.0.13), and Maven 3.9.6 at runtime. The Dockerfile still defines the same pins. A result of `False` on that unmigrated tree means the grader ran. `--setup h1` lets the agent migrate, with a dependency lookup server. `--setup h2` runs `tools/deps-prepass.py` during the environment install and does not attach the lookup server. Set `HARNESS_ERROR_PREPASS=1` to run Maven once on that tree and put the compiler and test errors in the agent's first prompt.
 
 ## Requirements
 
