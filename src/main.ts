@@ -11,6 +11,7 @@ import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
 import { reportRepo, writeReport, type MigrationReport } from "./report.js";
 import type { RepoRef } from "./types.js";
+import { fetchTeamUsage } from "./team-usage.js";
 import type { UsageSnapshot } from "./usage.js";
 import { envProofGap, parseEvalLog, type ParsedVerdict } from "./verdict.js";
 
@@ -141,6 +142,7 @@ async function runOne(
       calls: capture.calls,
       minutes: Number(capture.minutes.toFixed(3)),
       ...usageFields(limitedUsage),
+      teamUsage: await fetchTeamUsage(capture.agentId, capture.startedAt, capture.endedAt),
       verdict: unfinishedVerdict("Stopped before grading because usage_limit_exceeded."),
       dependencies: { before: [], after: [] },
       ndjsonPath,
@@ -280,6 +282,7 @@ async function runOne(
     calls: capture.calls,
     minutes: Number(capture.minutes.toFixed(3)),
     ...usageFields(usage),
+    teamUsage: await fetchTeamUsage(capture.agentId, capture.startedAt, capture.endedAt),
     verdict,
     ...(verdictBeforeRetry ? { verdictBeforeRetry } : {}),
     dependencies: { before, after },

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ParsedVerdict } from "./verdict.js";
 import type { PinnedModel, RepoRef, Setup } from "./types.js";
+import type { TeamUsage } from "./team-usage.js";
 import type { TokenCount } from "./usage.js";
 
 export interface MigrationReport {
@@ -33,6 +34,8 @@ export interface MigrationReport {
   getUsage: unknown;
   /** Token fields from `getUsage().usage`. Each missing field is the string `absent`. */
   tokens: Record<string, TokenCount>;
+  /** Sums from the team filtered-usage-events endpoint for this cloud agent. */
+  teamUsage: TeamUsage;
   verdict: ParsedVerdict;
   /** First grader result when `--retry` ran a second attempt. */
   verdictBeforeRetry?: ParsedVerdict;
