@@ -4,7 +4,7 @@ TypeScript orchestrator for one cloud agent per Maven repository. It forks the r
 
 The agent's own build is not the verdict. `migration-report.json` records the grader's result, tool calls, minutes, and `chargedCents` from `getUsage()`.
 
-If the fork's default branch already has one harness commit on the pinned base, that commit is kept. A prepaid-balance `usage_limit_exceeded` error stops the run before grading.
+If the fork's default branch already has a harness commit that descends from the pinned base, that commit is kept. A prepaid-balance `usage_limit_exceeded` error stops the run before grading.
 
 ## Flags
 

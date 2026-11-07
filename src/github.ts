@@ -105,6 +105,25 @@ export async function defaultBranchCommit(
   };
 }
 
+/** True when `head` is `ancestor` or a descendant of it. */
+export async function commitDescendsFrom(
+  token: string,
+  owner: string,
+  name: string,
+  ancestor: string,
+  head: string,
+): Promise<boolean> {
+  if (ancestor === head) return true;
+  const response = await request(
+    token,
+    "GET",
+    `/repos/${owner}/${name}/compare/${ancestor}...${head}`,
+  );
+  if (response.status !== 200) return false;
+  const body = JSON.parse(response.body) as { status?: string };
+  return body.status === "ahead" || body.status === "identical";
+}
+
 export async function repoHasFile(
   token: string,
   owner: string,

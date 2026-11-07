@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import {
   authedRemote,
+  commitDescendsFrom,
   defaultBranchCommit,
   ensureRepo,
   repoHasFile,
@@ -47,10 +48,14 @@ export function reusableHarnessCommit(input: {
   remote: RemoteCommit | null;
   baseCommit: string;
   hasHarnessFile: boolean;
+  descendsFromBase?: boolean;
 }): string | null {
   if (!input.remote || !input.hasHarnessFile) return null;
-  if (!input.remote.parents.includes(input.baseCommit)) return null;
-  return input.remote.sha;
+  const onBase =
+    input.remote.sha === input.baseCommit ||
+    input.remote.parents.includes(input.baseCommit) ||
+    input.descendsFromBase === true;
+  return onBase ? input.remote.sha : null;
 }
 
 export async function prepareFork(input: {
@@ -76,10 +81,24 @@ export async function prepareFork(input: {
         existing.sha,
       )
     : false;
+  const descendsFromBase =
+    existing !== null &&
+    hasHarnessFile &&
+    !existing.parents.includes(input.repo.baseCommit) &&
+    existing.sha !== input.repo.baseCommit
+      ? await commitDescendsFrom(
+          input.token,
+          input.owner,
+          input.forkName,
+          input.repo.baseCommit,
+          existing.sha,
+        )
+      : false;
   const reuse = reusableHarnessCommit({
     remote: existing,
     baseCommit: input.repo.baseCommit,
     hasHarnessFile,
+    descendsFromBase,
   });
   if (reuse) {
     await git(["clone", "--no-tags", forkUrl, checkout], input.workRoot, input.token);

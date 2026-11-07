@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gzip \
       git \
       python3 \
+      sudo \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system --add safe.directory '*' \
     && git config --system user.email "harness@example.com" \
@@ -39,6 +40,7 @@ COPY settings.xml /opt/maven/conf/settings.xml
 ENV PATH="/opt/maven/bin:/opt/java/temurin-17/bin:${PATH}"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash ubuntu \
+    && mkdir -p /etc/sudoers.d \
     && echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu \
     && chmod 440 /etc/sudoers.d/ubuntu
 

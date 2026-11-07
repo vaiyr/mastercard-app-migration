@@ -1,6 +1,7 @@
 {
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "context": "."
   },
   "install": "bash .cursor/install.sh"
 }
