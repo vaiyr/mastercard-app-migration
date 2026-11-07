@@ -134,6 +134,8 @@ async function runOne(
       runId: capture.runId,
       branch: capture.branch,
       model,
+      startedAt: capture.startedAt,
+      endedAt: capture.endedAt,
       setup: options.setup,
       target: options.target,
       calls: capture.calls,
@@ -182,6 +184,7 @@ async function runOne(
   let verdict = parseEvalLog(maximal.log, minimal?.log);
   verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
   let verdictBeforeRetry: ParsedVerdict | undefined;
+  let reportRetryWindow: { retryStartedAt: string; retryEndedAt: string } | undefined;
   const evalLogPath = path.join(dir, "eval.log");
   await writeFile(evalLogPath, [maximal.log, minimal?.log ?? ""].join("\n----- minimal -----\n"));
 
@@ -210,10 +213,18 @@ async function runOne(
       retryFailure: failureList,
       resumeId: started.agent.agentId,
     });
+    const firstStartedAt = capture.startedAt;
+    const firstEndedAt = capture.endedAt;
     capture = {
       ...retried.capture,
       calls: capture.calls + retried.capture.calls,
       minutes: capture.minutes + retried.capture.minutes,
+      startedAt: firstStartedAt,
+      endedAt: firstEndedAt,
+    };
+    reportRetryWindow = {
+      retryStartedAt: retried.capture.startedAt,
+      retryEndedAt: retried.capture.endedAt,
     };
     if (isUsageLimit(retried.capture.error)) {
       halt();
@@ -261,6 +272,9 @@ async function runOne(
     runId: capture.runId,
     branch: capture.branch,
     model,
+    startedAt: capture.startedAt,
+    endedAt: capture.endedAt,
+    ...(reportRetryWindow ?? {}),
     setup: options.setup,
     target: options.target,
     calls: capture.calls,

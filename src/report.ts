@@ -15,6 +15,13 @@ export interface MigrationReport {
   runId?: string;
   branch?: string;
   model: PinnedModel;
+  /** UTC start of this run, ISO-8601. `absent` when neither the API nor the local clock recorded it. */
+  startedAt: string;
+  /** UTC end of this run, ISO-8601. `absent` when it was not recorded. */
+  endedAt: string;
+  /** UTC window of a verifier retry, separate from the first attempt. */
+  retryStartedAt?: string;
+  retryEndedAt?: string;
   setup: Setup;
   target: string;
   calls: number;

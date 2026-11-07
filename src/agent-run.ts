@@ -5,6 +5,7 @@ import { MAX_MINUTES } from "./limits.js";
 import { promptFor, retryPrompt } from "./prompts.js";
 import type { PinnedModel, Setup } from "./types.js";
 import { selectionFrom } from "./model.js";
+import { runWindow } from "./time.js";
 import { absentUsage, snapshotFromUsage, type UsageSnapshot } from "./usage.js";
 
 export interface RunCapture {
@@ -14,6 +15,8 @@ export interface RunCapture {
   result?: RunResult;
   calls: number;
   minutes: number;
+  startedAt: string;
+  endedAt: string;
   branch?: string;
   prUrl?: string;
   ndjsonPath: string;
@@ -92,6 +95,7 @@ export async function runCloudAgent(input: {
       });
 
   const stream = createWriteStream(input.ndjsonPath, { flags: "a" });
+  const observedStart = new Date().toISOString();
   const started = Date.now();
   const seen = new Set<string>();
   let calls = 0;
@@ -129,6 +133,10 @@ export async function runCloudAgent(input: {
     }
     const result = await run.wait();
     const located = branchFor(result, input.forkUrl);
+    const window = runWindow(run.createdAt, result.durationMs ?? run.durationMs, {
+      start: observedStart,
+      end: new Date().toISOString(),
+    });
     const capture: RunCapture = {
       agentId: agent.agentId,
       agentUrl: `https://cursor.com/agents/${agent.agentId}`,
@@ -136,6 +144,8 @@ export async function runCloudAgent(input: {
       result,
       calls,
       minutes: (result.durationMs ?? Date.now() - started) / 60_000,
+      startedAt: window.startedAt,
+      endedAt: window.endedAt,
       branch: located.branch,
       prUrl: located.prUrl,
       ndjsonPath: input.ndjsonPath,
@@ -144,6 +154,10 @@ export async function runCloudAgent(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await writeEvent(stream, { kind: "error", message });
+    const window = runWindow(run?.createdAt, run?.durationMs, {
+      start: observedStart,
+      end: new Date().toISOString(),
+    });
     return {
       agent,
       capture: {
@@ -152,6 +166,8 @@ export async function runCloudAgent(input: {
         runId: run?.id ?? "",
         calls,
         minutes: (Date.now() - started) / 60_000,
+        startedAt: window.startedAt,
+        endedAt: window.endedAt,
         ndjsonPath: input.ndjsonPath,
         error: message,
       },

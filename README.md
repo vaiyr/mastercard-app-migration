@@ -2,7 +2,7 @@
 
 TypeScript orchestrator for one cloud agent per Maven repository. It forks the repo at a pinned commit, commits an environment (Temurin 8, Temurin 17, Maven 3.9.6), streams the run to NDJSON, and grades the source diff with MigrationBench `run_eval.py --use_docker` outside the agent VM.
 
-The agent's own build is not the verdict. `migration-report.json` records the grader's result, tool calls, minutes, the full `getUsage()` object, and its input, output, cache, and total token fields. A missing token field is the string `absent`. `chargedCents` can be 0 when usage is included in a plan; the token counts are still recorded.
+The agent's own build is not the verdict. `migration-report.json` records the grader's result, tool calls, minutes, UTC `startedAt` and `endedAt` next to the model, the full `getUsage()` object, and its input, output, cache, and total token fields. A missing token or time field is the string `absent`. `chargedCents` can be 0 when usage is included in a plan; the token counts are still recorded.
 
 If the fork's default branch already has a harness commit that descends from the pinned base and the same setup, that commit is kept. A prepaid-balance `usage_limit_exceeded` error stops that run before grading and does not start repositories still waiting in the queue.
 
