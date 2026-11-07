@@ -7,6 +7,7 @@ import {
   commitDescendsFrom,
   defaultBranchCommit,
   ensureRepo,
+  repoFileText,
   repoHasFile,
   scrub,
   type RemoteCommit,
@@ -49,7 +50,9 @@ export function reusableHarnessCommit(input: {
   baseCommit: string;
   hasHarnessFile: boolean;
   descendsFromBase?: boolean;
+  sameSetup?: boolean;
 }): string | null {
+  if (input.sameSetup === false) return null;
   if (!input.remote || !input.hasHarnessFile) return null;
   const onBase =
     input.remote.sha === input.baseCommit ||
@@ -94,11 +97,22 @@ export async function prepareFork(input: {
           existing.sha,
         )
       : false;
+  const recordedSetup =
+    existing !== null && hasHarnessFile
+      ? await repoFileText(
+          input.token,
+          input.owner,
+          input.forkName,
+          ".cursor/harness-setup",
+          existing.sha,
+        )
+      : null;
   const reuse = reusableHarnessCommit({
     remote: existing,
     baseCommit: input.repo.baseCommit,
     hasHarnessFile,
     descendsFromBase,
+    sameSetup: (recordedSetup ?? "").trim() === input.setup,
   });
   if (reuse) {
     await git(["clone", "--no-tags", forkUrl, checkout], input.workRoot, input.token);
@@ -127,6 +141,9 @@ export async function prepareFork(input: {
   );
   const harnessCommit = (await git(["rev-parse", "HEAD"], checkout, input.token)).trim();
   const remote = authedRemote(forkUrl, input.token);
-  await git(["push", "--set-upstream", remote, "main"], checkout, input.token);
+  const pushArgs = ["push", "--set-upstream"];
+  if (existing) pushArgs.push(`--force-with-lease=main:${existing.sha}`);
+  pushArgs.push(remote, "main");
+  await git(pushArgs, checkout, input.token);
   return { forkUrl, checkout, harnessCommit };
 }

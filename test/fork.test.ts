@@ -30,6 +30,18 @@ test("reuses a later harness commit that still descends from the base", () => {
   );
 });
 
+test("does not reuse a harness commit from a different setup", () => {
+  assert.equal(
+    reusableHarnessCommit({
+      remote: { sha: HARNESS, parents: [BASE] },
+      baseCommit: BASE,
+      hasHarnessFile: true,
+      sameSetup: false,
+    }),
+    null,
+  );
+});
+
 test("does not reuse an empty repo or a different base", () => {
   assert.equal(
     reusableHarnessCommit({ remote: null, baseCommit: BASE, hasHarnessFile: false }),

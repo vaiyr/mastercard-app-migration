@@ -124,6 +124,24 @@ export async function commitDescendsFrom(
   return body.status === "ahead" || body.status === "identical";
 }
 
+export async function repoFileText(
+  token: string,
+  owner: string,
+  name: string,
+  filePath: string,
+  ref: string,
+): Promise<string | null> {
+  const response = await request(
+    token,
+    "GET",
+    `/repos/${owner}/${name}/contents/${filePath}?ref=${encodeURIComponent(ref)}`,
+  );
+  if (response.status !== 200) return null;
+  const body = JSON.parse(response.body) as { content?: string; encoding?: string };
+  if (body.encoding !== "base64" || !body.content) return null;
+  return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+}
+
 export async function repoHasFile(
   token: string,
   owner: string,
