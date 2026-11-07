@@ -11,7 +11,20 @@ import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
 import { reportRepo, writeReport, type MigrationReport } from "./report.js";
 import type { RepoRef } from "./types.js";
+import type { UsageSnapshot } from "./usage.js";
 import { envProofGap, parseEvalLog, type ParsedVerdict } from "./verdict.js";
+
+function usageFields(
+  usage: UsageSnapshot,
+): Pick<MigrationReport, "chargedCents" | "rawCostCents" | "costSettled" | "getUsage" | "tokens"> {
+  return {
+    chargedCents: usage.chargedCents,
+    rawCostCents: usage.rawCostCents,
+    costSettled: usage.costSettled,
+    getUsage: usage.getUsage,
+    tokens: usage.tokens,
+  };
+}
 
 function unfinishedVerdict(note: string): ParsedVerdict {
   return {
@@ -110,6 +123,7 @@ async function runOne(
   let capture = started.capture;
   if (isUsageLimit(capture.error)) {
     halt();
+    const limitedUsage = await pollChargedCents(started.agent, { waitForCost: false });
     await started.agent.close();
     const report: MigrationReport = {
       ...reportRepo(repo),
@@ -124,9 +138,7 @@ async function runOne(
       target: options.target,
       calls: capture.calls,
       minutes: Number(capture.minutes.toFixed(3)),
-      chargedCents: null,
-      rawCostCents: null,
-      costSettled: false,
+      ...usageFields(limitedUsage),
       verdict: unfinishedVerdict("Stopped before grading because usage_limit_exceeded."),
       dependencies: { before: [], after: [] },
       ndjsonPath,
@@ -135,19 +147,14 @@ async function runOne(
     await writeReport(dir, report);
     return report;
   }
-  const usage = await pollChargedCents(started.agent).catch((error: unknown) => ({
-    chargedCents: null,
-    rawCostCents: null,
-    settled: false,
-    error: error instanceof Error ? error.message : String(error),
-  }));
+  let usage = await pollChargedCents(started.agent);
 
   let head = prepared.harnessCommit;
   if (capture.branch) {
     await fetchFork(prepared.checkout, prepared.forkUrl, token);
     head = `fork/${capture.branch}`;
   }
-  const diffText =
+  let diffText =
     options.setup === "env"
       ? ""
       : await sourceDiff(prepared.checkout, repo.baseCommit, head).catch(() => "");
@@ -174,11 +181,18 @@ async function runOne(
         });
   let verdict = parseEvalLog(maximal.log, minimal?.log);
   verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
+  let verdictBeforeRetry: ParsedVerdict | undefined;
   const evalLogPath = path.join(dir, "eval.log");
   await writeFile(evalLogPath, [maximal.log, minimal?.log ?? ""].join("\n----- minimal -----\n"));
 
   if (options.retry && options.setup !== "env" && verdict.maximal === false && !capture.error) {
+    verdictBeforeRetry = verdict;
     const failureList = [
+      `r1=${String(verdict.r1)}`,
+      `r2=${String(verdict.r2)}`,
+      `r3=${String(verdict.r3)}`,
+      `r4=${String(verdict.r4)}`,
+      `r5=${String(verdict.r5)}`,
       `maximal=${String(verdict.maximal)}`,
       `minimal=${String(verdict.minimal)}`,
       `buildSuccess=${String(verdict.buildSuccess)}`,
@@ -201,7 +215,38 @@ async function runOne(
       calls: capture.calls + retried.capture.calls,
       minutes: capture.minutes + retried.capture.minutes,
     };
-    if (isUsageLimit(retried.capture.error)) halt();
+    if (isUsageLimit(retried.capture.error)) {
+      halt();
+      usage = await pollChargedCents(started.agent, { waitForCost: false });
+    } else if (capture.branch) {
+      await fetchFork(prepared.checkout, prepared.forkUrl, token);
+      head = `fork/${capture.branch}`;
+      diffText = await sourceDiff(prepared.checkout, repo.baseCommit, head).catch(() => "");
+      await writeFile(diffPath, diffText);
+      const retriedMaximal = await runEval({
+        githubUrl: repo.url,
+        baseCommit: repo.baseCommit,
+        diffPath,
+        target: options.target,
+        maximal: true,
+      });
+      const retriedMinimal = await runEval({
+        githubUrl: repo.url,
+        baseCommit: repo.baseCommit,
+        diffPath,
+        target: options.target,
+        maximal: false,
+      });
+      verdict = parseEvalLog(retriedMaximal.log, retriedMinimal.log);
+      verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
+      await writeFile(
+        evalLogPath,
+        [retriedMaximal.log, retriedMinimal.log].join("\n----- minimal -----\n"),
+      );
+      usage = await pollChargedCents(started.agent);
+    } else {
+      usage = await pollChargedCents(started.agent);
+    }
   }
 
   await started.agent.close();
@@ -220,14 +265,13 @@ async function runOne(
     target: options.target,
     calls: capture.calls,
     minutes: Number(capture.minutes.toFixed(3)),
-    chargedCents: usage.chargedCents,
-    rawCostCents: usage.rawCostCents,
-    costSettled: usage.settled,
+    ...usageFields(usage),
     verdict,
+    ...(verdictBeforeRetry ? { verdictBeforeRetry } : {}),
     dependencies: { before, after },
     ndjsonPath,
     evalLogPath,
-    error: capture.error ?? ("error" in usage ? usage.error : undefined),
+    error: capture.error ?? usage.error,
   };
   await writeReport(dir, report);
   if (options.setup === "env") {

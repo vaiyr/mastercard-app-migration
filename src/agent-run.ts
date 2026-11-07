@@ -5,6 +5,7 @@ import { MAX_MINUTES } from "./limits.js";
 import { promptFor, retryPrompt } from "./prompts.js";
 import type { PinnedModel, Setup } from "./types.js";
 import { selectionFrom } from "./model.js";
+import { absentUsage, snapshotFromUsage, type UsageSnapshot } from "./usage.js";
 
 export interface RunCapture {
   agentId: string;
@@ -161,27 +162,23 @@ export async function runCloudAgent(input: {
   }
 }
 
-export async function pollChargedCents(agent: SDKAgent): Promise<{
-  chargedCents: number | null;
-  rawCostCents: number | null;
-  settled: boolean;
-}> {
-  const deadline = Date.now() + 3 * 60_000;
-  let last: Awaited<ReturnType<SDKAgent["getUsage"]>> | undefined;
-  while (Date.now() < deadline) {
-    last = await agent.getUsage();
-    if (last.cost) {
-      return {
-        chargedCents: last.cost.chargedCents,
-        rawCostCents: last.cost.rawCostCents,
-        settled: true,
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 15_000));
+export async function pollChargedCents(
+  agent: SDKAgent,
+  options?: { waitForCost?: boolean },
+): Promise<UsageSnapshot> {
+  const wait = options?.waitForCost !== false;
+  const deadline = Date.now() + (wait ? 3 * 60_000 : 0);
+  let last: unknown;
+  try {
+    do {
+      last = await agent.getUsage();
+      const snapshot = snapshotFromUsage(last);
+      if (snapshot.costSettled || !wait || Date.now() >= deadline) return snapshot;
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+    } while (Date.now() < deadline);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return absentUsage(message);
   }
-  return {
-    chargedCents: last?.cost?.chargedCents ?? null,
-    rawCostCents: last?.cost?.rawCostCents ?? null,
-    settled: Boolean(last?.cost),
-  };
+  return snapshotFromUsage(last);
 }
