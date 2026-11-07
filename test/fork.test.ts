@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { reusableHarnessCommit } from "../src/fork.js";
 import { includeCopiedPath } from "../src/inject.js";
-import { isUsageLimit } from "../src/agent-run.js";
+import { isUsageLimit, stopRemainingRepos } from "../src/agent-run.js";
 
 const BASE = "40ca6e2894292c79f2830c9a23531c182f7fe8e4";
 const HARNESS = "7484c6da72b3de9762bf93b7c9db68c58feb6bcc";
@@ -80,4 +80,13 @@ test("recognizes a prepaid balance error", () => {
   );
   assert.equal(isUsageLimit("model not found"), false);
   assert.equal(isUsageLimit(undefined), false);
+});
+
+test("a usage limit drops repositories that have not started", () => {
+  const queue = ["running-elsewhere", "waiting"];
+  const state = { stop: false };
+  queue.shift();
+  stopRemainingRepos(queue, state);
+  assert.equal(state.stop, true);
+  assert.deepEqual(queue, []);
 });

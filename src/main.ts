@@ -1,7 +1,7 @@
 import { IntegrationNotConnectedError } from "@cursor/sdk";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isUsageLimit, pollChargedCents, runCloudAgent } from "./agent-run.js";
+import { isUsageLimit, pollChargedCents, runCloudAgent, stopRemainingRepos } from "./agent-run.js";
 import { parseArgs } from "./cli.js";
 import { fetchFork, sourceDiff } from "./diff.js";
 import { ensureEvaluatorReady, runEval } from "./evaluate.js";
@@ -11,7 +11,24 @@ import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
 import { reportRepo, writeReport, type MigrationReport } from "./report.js";
 import type { RepoRef } from "./types.js";
-import { envProofGap, parseEvalLog } from "./verdict.js";
+import { envProofGap, parseEvalLog, type ParsedVerdict } from "./verdict.js";
+
+function unfinishedVerdict(note: string): ParsedVerdict {
+  return {
+    maximal: null,
+    minimal: null,
+    buildSuccess: null,
+    testCount: null,
+    r1: null,
+    r2: null,
+    r3: null,
+    r4: null,
+    r5: null,
+    r1r2Combined: false,
+    dependencyFailures: [],
+    notes: [note],
+  };
+}
 
 function outRoot(): string {
   return process.env.HARNESS_OUT || path.resolve("out");
@@ -54,6 +71,7 @@ async function runOne(
   repo: RepoRef,
   options: ReturnType<typeof parseArgs>,
   model: Awaited<ReturnType<typeof pinModel>>,
+  halt: () => void,
 ): Promise<MigrationReport> {
   const owner = process.env.HARNESS_FORK_OWNER;
   if (!owner) throw new Error("Set HARNESS_FORK_OWNER to the neutral GitHub account that will hold forks");
@@ -91,8 +109,31 @@ async function runOne(
   });
   let capture = started.capture;
   if (isUsageLimit(capture.error)) {
+    halt();
     await started.agent.close();
-    throw new Error(capture.error);
+    const report: MigrationReport = {
+      ...reportRepo(repo),
+      forkUrl: prepared.forkUrl,
+      harnessCommit: prepared.harnessCommit,
+      agentId: capture.agentId,
+      agentUrl: capture.agentUrl,
+      runId: capture.runId,
+      branch: capture.branch,
+      model,
+      setup: options.setup,
+      target: options.target,
+      calls: capture.calls,
+      minutes: Number(capture.minutes.toFixed(3)),
+      chargedCents: null,
+      rawCostCents: null,
+      costSettled: false,
+      verdict: unfinishedVerdict("Stopped before grading because usage_limit_exceeded."),
+      dependencies: { before: [], after: [] },
+      ndjsonPath,
+      error: capture.error,
+    };
+    await writeReport(dir, report);
+    return report;
   }
   const usage = await pollChargedCents(started.agent).catch((error: unknown) => ({
     chargedCents: null,
@@ -160,6 +201,7 @@ async function runOne(
       calls: capture.calls + retried.capture.calls,
       minutes: capture.minutes + retried.capture.minutes,
     };
+    if (isUsageLimit(retried.capture.error)) halt();
   }
 
   await started.agent.close();
@@ -206,11 +248,16 @@ async function main(): Promise<void> {
   const repos = await selectRepos(options.setup);
   const reports: MigrationReport[] = [];
   const queue = [...repos];
+  const gate = { stop: false };
+  const halt = () => stopRemainingRepos(queue, gate);
   const workers = Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
     for (;;) {
+      if (gate.stop) return;
       const repo = queue.shift();
       if (!repo) return;
-      reports.push(await runOne(repo, options, model));
+      const report = await runOne(repo, options, model, halt);
+      reports.push(report);
+      if (isUsageLimit(report.error)) return;
     }
   });
   await Promise.all(workers);

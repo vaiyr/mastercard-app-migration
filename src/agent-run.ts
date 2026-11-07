@@ -50,6 +50,12 @@ export function isUsageLimit(message: string | undefined): boolean {
   return Boolean(message?.includes("usage_limit_exceeded"));
 }
 
+/** Drop queued repositories after a prepaid-balance stop. In-flight runs are left alone. */
+export function stopRemainingRepos(queue: unknown[], state: { stop: boolean }): void {
+  state.stop = true;
+  queue.length = 0;
+}
+
 export async function runCloudAgent(input: {
   forkUrl: string;
   setup: Setup;
