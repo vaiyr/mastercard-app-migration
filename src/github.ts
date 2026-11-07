@@ -46,24 +46,24 @@ async function request(
   };
 }
 
-/** GitHub organization that receives private harness forks. */
+/** Default GitHub organization that receives private harness forks. */
 export const FORK_OWNER = "mastercard-app-migration";
 
-/** Unset uses the organization. Any other owner is rejected. */
+/** Unset uses the default organization. Any other GitHub org name is accepted. */
 export function resolveForkOwner(configured: string | undefined = process.env.HARNESS_FORK_OWNER): string {
   const owner = configured?.trim() || FORK_OWNER;
-  if (owner !== FORK_OWNER) {
-    throw new Error(`Fork owner must be ${FORK_OWNER}`);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(owner)) {
+    throw new Error(`Fork owner is not a GitHub org name: ${owner}`);
   }
-  return FORK_OWNER;
+  return owner;
 }
 
-export function forkCloneUrl(name: string): string {
-  return `https://github.com/${FORK_OWNER}/${name}`;
+export function forkCloneUrl(name: string, owner: string = resolveForkOwner()): string {
+  return `https://github.com/${resolveForkOwner(owner)}/${name}`;
 }
 
-export function orgRepoCreatePath(): string {
-  return `/orgs/${FORK_OWNER}/repos`;
+export function orgRepoCreatePath(owner: string = resolveForkOwner()): string {
+  return `/orgs/${resolveForkOwner(owner)}/repos`;
 }
 
 export function newRepoBody(name: string): {
@@ -119,22 +119,22 @@ export async function ensureRepo(
   owner: string,
   name: string,
 ): Promise<string> {
-  resolveForkOwner(owner);
-  const existing = await request(token, "GET", `/repos/${owner}/${name}`);
+  const resolved = resolveForkOwner(owner);
+  const existing = await request(token, "GET", `/repos/${resolved}/${name}`);
   if (existing.status === 200) {
-    await makePrivate(token, owner, name, existing.body);
-    return forkCloneUrl(name);
+    await makePrivate(token, resolved, name, existing.body);
+    return forkCloneUrl(name, resolved);
   }
-  const created = await request(token, "POST", orgRepoCreatePath(), newRepoBody(name));
+  const created = await request(token, "POST", orgRepoCreatePath(resolved), newRepoBody(name));
   if (created.status === 201) {
-    await makePrivate(token, owner, name, created.body);
-    return forkCloneUrl(name);
+    await makePrivate(token, resolved, name, created.body);
+    return forkCloneUrl(name, resolved);
   }
   const detail = created.permissions
     ? ` Missing permission: ${created.permissions}.`
     : "";
   throw new Error(
-    `Could not create ${owner}/${name} (${created.status}).${detail} ${created.body.slice(0, 300)}`,
+    `Could not create ${resolved}/${name} (${created.status}).${detail} ${created.body.slice(0, 300)}`,
   );
 }
 

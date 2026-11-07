@@ -21,7 +21,10 @@ test("forks are created in the mastercard-app-migration organization", () => {
     assert.equal(forkCloneUrl("app"), "https://github.com/mastercard-app-migration/app");
     assert.equal(resolveForkOwner(), "mastercard-app-migration");
     assert.equal(resolveForkOwner("  mastercard-app-migration  "), "mastercard-app-migration");
-    assert.throws(() => resolveForkOwner("vaiyr"), /mastercard-app-migration/);
+    assert.equal(resolveForkOwner("vaiyr"), "vaiyr");
+    assert.equal(orgRepoCreatePath("acme"), "/orgs/acme/repos");
+    assert.equal(forkCloneUrl("app", "acme"), "https://github.com/acme/app");
+    assert.throws(() => resolveForkOwner("not a org"), /GitHub org name/);
   } finally {
     if (previous === undefined) delete process.env.HARNESS_FORK_OWNER;
     else process.env.HARNESS_FORK_OWNER = previous;

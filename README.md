@@ -28,7 +28,7 @@ npm run harness -- --setup env|h1|h2 --model <catalog-id> --budget <calls> --con
 
 | Variable | Purpose |
 | --- | --- |
-| `HARNESS_FORK_OWNER` | Optional. Private forks are created in the `mastercard-app-migration` organization at `https://github.com/mastercard-app-migration/<name>`. Any other owner is rejected. |
+| `HARNESS_FORK_OWNER` | Optional. Private forks are created in this GitHub organization. Unset uses `mastercard-app-migration`. |
 | `HARNESS_NAME_DENY` | Comma-separated substrings removed from fork names |
 | `HARNESS_REPOS` | CSV with `github_url` and `base_commit`. Required unless `--setup env` |
 | `HARNESS_REPO_MATCH` | Substring that selects one CSV row |
