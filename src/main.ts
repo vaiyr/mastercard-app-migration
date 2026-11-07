@@ -6,7 +6,7 @@ import { parseArgs } from "./cli.js";
 import { fetchFork, sourceDiff } from "./diff.js";
 import { ensureEvaluatorReady, runEval } from "./evaluate.js";
 import { prepareFork } from "./fork.js";
-import { githubToken } from "./github.js";
+import { githubToken, resolveForkOwner } from "./github.js";
 import { captureMavenErrors } from "./maven-errors.js";
 import { pinModel } from "./model.js";
 import { forkName, loadRepos, probeRepo } from "./repos.js";
@@ -88,15 +88,7 @@ async function runOne(
   model: Awaited<ReturnType<typeof pinModel>>,
   halt: () => void,
 ): Promise<MigrationReport> {
-  const owner = process.env.HARNESS_FORK_OWNER;
-  if (!owner) throw new Error("Set HARNESS_FORK_OWNER to the neutral GitHub account that will hold forks");
-  const denied = (process.env.HARNESS_NAME_DENY || "")
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-  if (denied.some((fragment) => owner.toLowerCase().includes(fragment))) {
-    throw new Error("HARNESS_FORK_OWNER matches HARNESS_NAME_DENY");
-  }
+  const owner = resolveForkOwner();
   const token = await githubToken();
   const name = forkName(repo, options.setup);
   const slug = name;

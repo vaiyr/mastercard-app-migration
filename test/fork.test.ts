@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { newRepoBody } from "../src/github.js";
+import { FORK_OWNER, forkCloneUrl, newRepoBody, orgRepoCreatePath, resolveForkOwner } from "../src/github.js";
 import { reusableHarnessCommit } from "../src/fork.js";
 import { includeCopiedPath } from "../src/inject.js";
 import { isUsageLimit, stopRemainingRepos } from "../src/agent-run.js";
@@ -10,6 +10,22 @@ const HARNESS = "7484c6da72b3de9762bf93b7c9db68c58feb6bcc";
 
 test("new forks are created private", () => {
   assert.equal(newRepoBody("queue-ticket-api").private, true);
+});
+
+test("forks are created in the mastercard-app-migration organization", () => {
+  const previous = process.env.HARNESS_FORK_OWNER;
+  delete process.env.HARNESS_FORK_OWNER;
+  try {
+    assert.equal(FORK_OWNER, "mastercard-app-migration");
+    assert.equal(orgRepoCreatePath(), "/orgs/mastercard-app-migration/repos");
+    assert.equal(forkCloneUrl("app"), "https://github.com/mastercard-app-migration/app");
+    assert.equal(resolveForkOwner(), "mastercard-app-migration");
+    assert.equal(resolveForkOwner("  mastercard-app-migration  "), "mastercard-app-migration");
+    assert.throws(() => resolveForkOwner("vaiyr"), /mastercard-app-migration/);
+  } finally {
+    if (previous === undefined) delete process.env.HARNESS_FORK_OWNER;
+    else process.env.HARNESS_FORK_OWNER = previous;
+  }
 });
 
 test("reuses one harness commit on the pinned base", () => {
