@@ -56,6 +56,13 @@ def dependency_misses(root: str) -> tuple[list[dict], int]:
     return misses, len(effective)
 
 
+def error_lines(log: str, limit: int = 40) -> list[str]:
+    """The compiler and test failure lines from a Maven log, for the report."""
+    keep = ("[ERROR]", "BUILD FAILURE", "COMPILATION ERROR", "Tests run:", "Failed tests")
+    lines = [line.rstrip() for line in log.splitlines() if any(k in line for k in keep)]
+    return lines[:limit]
+
+
 def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -> dict:
     with tempfile.TemporaryDirectory() as root:
         local = git.Repo.clone_from(github_url, root)
@@ -70,6 +77,7 @@ def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -
             maven_utils.MVN_CLEAN_VERIFY.format(root_dir=root), check=False
         )
         r1 = verify.return_code == 0
+        verify_errors = [] if r1 else error_lines(verify.stdout or "")
         majors = sorted(utils.get_compiled_java_major_versions(root)) if r1 else []
         r2 = r1 and majors == [class_major]
         misses, tracked = dependency_misses(root) if r1 else ([], 0)
@@ -93,6 +101,7 @@ def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -
         "tests": tests, "testsRequired": required,
         "trackedDependencies": tracked, "dependencyMisses": misses,
         "diffApplied": applied,
+        "verifyErrors": verify_errors,
     }
 
 

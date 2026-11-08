@@ -48,6 +48,8 @@ export interface Verdict {
   trackedDependencies: number;
   dependencyMisses: DependencyMiss[];
   diffApplied: boolean;
+  /** Maven error lines when r1 failed. Diagnostics only; the retry prompt does not use them. */
+  verifyErrors?: string[];
   official?: { maximal: boolean; minimal: boolean };
   agreesWithOfficial?: boolean;
   error?: string;
