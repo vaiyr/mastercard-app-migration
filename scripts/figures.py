@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Draw the results figure from summary.csv files.
+"""Draw the results figures from summary.csv files.
 
-    python3 scripts/figures.py results/mastercard-*.csv --labels "Composer, H2" ... -o results/figures/mastercard.png
+    python3 scripts/figures.py models results/mastercard-*.csv --labels "Composer, H2" ... -o results/figures/mastercard.png
+    python3 scripts/figures.py strips results/fleet-*.csv --labels "Composer, H2" ... -o results/figures/fleet.png
 
-One row per repo, one marker per run, x = dollars charged, filled when the run passed all five checks.
+models: one row per repo, one marker per run; fits a handful of repos.
+strips: one row per run, one marker per repo; fits a whole estate.
+x is dollars charged for the app including any retry; a filled marker passed all five checks.
 """
 
 import argparse
@@ -83,14 +86,42 @@ def models(paths, labels, out):
     fig.savefig(out)
 
 
+def strips(paths, labels, out):
+    fig, ax = plt.subplots(figsize=(8, 1.4 + 0.9 * len(paths)), dpi=200)
+    style(ax)
+    ax.xaxis.grid(True, color=GRID, linewidth=0.8)
+    ax.yaxis.grid(False)
+    for index, (path, label) in enumerate(zip(paths, labels)):
+        rows = load(path)
+        color = SERIES[index % len(SERIES)]
+        passed = [cents(row) / 100 for row in rows if row["maximal"] == "1"]
+        failed = [cents(row) / 100 for row in rows if row["maximal"] != "1"]
+        jitter = lambda n: [index + (i % 5 - 2) * 0.07 for i in range(n)]
+        ax.scatter(passed, jitter(len(passed)), s=34, color=color, linewidths=0, zorder=3)
+        ax.scatter(failed, jitter(len(failed)), s=34, facecolors="white", edgecolors=color, linewidths=1.5, zorder=3)
+        total = sum(cents(row) for row in rows) / 100
+        minutes = sum(float(row["minutes"] or 0) for row in rows) / max(len(rows), 1)
+        ax.annotate(f"{len(passed)}/{len(rows)} passed   ${total:.2f} total   {minutes:.1f} min/app",
+                    (1.0, index), xycoords=("axes fraction", "data"), textcoords="offset points", xytext=(-4, 9), ha="right", fontsize=8.5, color=INK_2)
+    ax.set_yticks(range(len(paths)))
+    ax.set_yticklabels(labels, color=INK)
+    ax.invert_yaxis()
+    ax.set_xlim(left=0)
+    ax.set_xlabel("dollars charged per app, including any retry (filled = passed all five checks)", color=INK_2)
+    ax.set_title("Every Mastercard reference app not yet on Java 17: two setups, two models", loc="left", color=INK, fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("kind", choices=["models", "strips"])
     parser.add_argument("paths", nargs="+")
     parser.add_argument("--labels", nargs="*", help="one per path; defaults to the run column")
     parser.add_argument("-o", "--out", required=True)
     args = parser.parse_args()
     labels = args.labels or [load(path)[0]["run"] for path in args.paths]
-    models(args.paths, labels, args.out)
+    (models if args.kind == "models" else strips)(args.paths, labels, args.out)
     print(args.out)
 
 

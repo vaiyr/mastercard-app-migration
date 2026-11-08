@@ -166,6 +166,8 @@ def baseline_tests(root: str, github_url: str, base_commit: str, java8_home: str
             continue
         _, output = mvn(["test", "-f", "."], root, java_home=home)
         tests = count_tests(output)
+        if tests < 0:
+            log.warning("baseline on %s gave no test total; last lines:\n%s", home, "\n".join(error_lines(output, 12) or output.splitlines()[-12:]))
         if tests >= 0:
             if cache:
                 cache.parent.mkdir(parents=True, exist_ok=True)

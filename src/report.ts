@@ -4,7 +4,7 @@ import type { Report } from "./types.js";
 
 export const SUMMARY_COLUMNS = [
   "run", "repo", "setup", "model", "retry", "maven_errors",
-  "r1", "r2", "r3", "r4", "r5", "maximal",
+  "r1", "r2", "r3", "r4", "r5", "maximal", "r4_baseline",
   "stop_reason", "nudged", "calls", "minutes", "started_at", "ended_at",
   "charged_cents", "total_cents", "first_charged_cents", "retry_charged_cents",
   "dependency_misses", "agent_url", "branch", "error",
@@ -30,6 +30,7 @@ export function summaryRow(report: Report): string {
     maven_errors: report.mavenErrors,
     r1: verdict.r1, r2: verdict.r2, r3: verdict.r3, r4: verdict.r4, r5: verdict.r5,
     maximal: verdict.maximal,
+    r4_baseline: verdict.testsRequired < 0 ? "skipped" : verdict.testsBaseline === "given" ? "manifest" : "measured",
     stop_reason: report.attempts.map((attempt) => attempt.stopReason).join("+"),
     nudged: report.attempts.some((attempt) => attempt.nudged),
     calls: report.calls,

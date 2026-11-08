@@ -29,7 +29,14 @@ def num(value, default=0.0):
 
 
 def checks(row):
-    return "".join("." if row.get(key) == "1" else "x" for key in ("r1", "r2", "r3", "r4", "r5"))
+    """One character per check: . pass, x fail, s skipped (r4 with no measurable baseline)."""
+    marks = []
+    for key in ("r1", "r2", "r3", "r4", "r5"):
+        if key == "r4" and row.get("r4_baseline") == "skipped":
+            marks.append("s")
+        else:
+            marks.append("." if row.get(key) == "1" else "x")
+    return "".join(marks)
 
 
 def main(paths):
