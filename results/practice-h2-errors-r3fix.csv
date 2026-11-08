@@ -1,0 +1,2 @@
+run,repo,setup,model,retry,maven_errors,r1,r2,r3,r4,r5,maximal,stop_reason,nudged,calls,minutes,started_at,ended_at,charged_cents,total_cents,first_charged_cents,retry_charged_cents,dependency_misses,agent_url,branch,error
+practice-h2-errors-r3fix,java-getting-started,h2,composer-2.5,1,1,0,0,1,0,0,0,finished+finished+finished,0,150,6.56,2026-11-08T16:53:55.656Z,2026-11-08T17:03:04.285Z,43.8527,141.4603,11.3667,32.486,,https://cursor.com/agents/bc-1852067e-a0fa-482c-bd0e-86f5f4f40734,migrate/practice-h2-errors,

@@ -15,7 +15,7 @@ RESULTS_PLACEHOLDER
 ## How a run works
 
 ```
-repos/<set>.csv ──► fork at base commit ──► + harness files ──► push harness-<setup>
+repos/<set>.csv ──► fork at base commit ──► + harness files ──► push harness/<run>
                                                                       │
                  ┌──────────────── Cursor cloud agent (one VM per app) ◄──┘
                  │  installs Temurin 8/17 + Maven, migrates, pushes migrate/<run>

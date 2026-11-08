@@ -39,7 +39,7 @@ export interface PreparedFork {
 
 /**
  * Clone the upstream repo at its base commit, add the harness files, and push
- * that one commit to the private fork as branch `harness-<setup>`. Cloud agents
+ * that one commit to the private fork as branch `harness/<run>`. Cloud agents
  * only accept a branch name as their starting ref, so the report records the
  * commit SHA for later checks.
  */
@@ -52,6 +52,8 @@ export async function prepareFork(input: {
   workRoot: string;
   /** The branch the agent will push. A leftover from an earlier run with the same name is deleted first. */
   runBranch: string;
+  /** Run name; the harness commit is pushed as harness/<run> so parallel runs never race on one branch. */
+  runName: string;
 }): Promise<PreparedFork> {
   const { repo, setup, token } = input;
   const forkUrl = await ensurePrivateRepo(token, input.owner, repo.name);
@@ -60,7 +62,7 @@ export async function prepareFork(input: {
   await mkdir(input.workRoot, { recursive: true });
   await git(["clone", "--quiet", "--no-tags", repo.url, checkout], input.workRoot, token);
   await git(["checkout", "--quiet", "--detach", repo.baseCommit], checkout, token);
-  const harnessBranch = `harness-${setup}`;
+  const harnessBranch = `harness/${input.runName}`;
   await git(["checkout", "--quiet", "-B", harnessBranch], checkout, token);
   await injectHarness(checkout, setup, input.target);
   if (setup === "h2") {

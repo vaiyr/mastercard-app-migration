@@ -62,6 +62,7 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     token: need("GITHUB_TOKEN"),
     workRoot: path.join(options.out, "work", options.name),
     runBranch: `migrate/${options.name}`,
+    runName: options.name,
   });
 
   let mavenErrors: string | undefined;
@@ -138,6 +139,7 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     baseCommit: repo.baseCommit,
     forkUrl: fork.forkUrl,
     harnessCommit: fork.harnessCommit,
+    harnessBranch: fork.harnessBranch,
     setup: options.setup,
     model,
     target: options.target,
@@ -200,7 +202,7 @@ async function retryOne(previous: Report, options: Options): Promise<Report> {
   const retry = await runAgent(
     {
       forkUrl: previous.forkUrl,
-      startingRef: `harness-${previous.setup}`,
+      startingRef: previous.harnessBranch ?? `harness/${previous.run}`,
       setup: previous.setup,
       model: previous.model,
       name: `${previous.setup}-${previous.model.id}-${repo.name}`,

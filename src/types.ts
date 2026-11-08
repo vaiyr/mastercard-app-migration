@@ -91,6 +91,7 @@ export interface Report {
   baseCommit: string;
   forkUrl: string;
   harnessCommit: string;
+  harnessBranch?: string;
   setup: Setup;
   model: PinnedModel;
   target: string;
