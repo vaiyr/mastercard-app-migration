@@ -40,7 +40,7 @@ Two setups, and two levers on top of the better one:
 | `--retry` | After grading fails, the same agent gets the failed checks and one more turn | |
 | `--maven-errors` | Maven is run locally on the bumped tree and its errors go in the first prompt | |
 
-The version table is MigrationBench's own `dependency_version.json`, standing in for the approved-versions list a platform team would publish. Both setups see the same table.
+The version table is MigrationBench's own `dependency_version.json`. In a company this would be the platform team's approved-versions list. Both setups see the same table.
 
 ## Repo layout
 
@@ -127,11 +127,11 @@ npm run harness -- --setup h2 --repos my.csv --retry --maven-errors --name my-se
 
 ## Where the numbers come from
 
-- **Pass or fail** is `grader/grade.py`, which calls MigrationBench's own functions on the diff between the base commit and the agent's branch. It runs on this machine's Java 17, never in the agent VM. `GRADE_OFFICIAL=1` runs the stock `run_eval` as well and records whether the two agree.
-- **Cents** are the sum of `chargedCents` over the team usage ledger's events for the agent's `cloudAgentId`. `total_cents` is the undiscounted token price. `agent.getUsage()` is not used: it reports zero for plan-included usage.
-- **Calls** are distinct tool calls seen on the run stream. **Minutes** are the run's wall clock, including the JDK install at the start.
-- **Branches.** The prompt names the branch (`migrate/<run>`) and tells the agent to create it first and push it last. Cloud agents do not commit or push on the agent's behalf, so when the branch is missing after a run the harness sends one more message asking for the commit and push; `nudged` in the summary marks those runs.
-- **Retry cents** are the ledger events from the retry's start time onward.
+- Pass or fail is `grader/grade.py`, which calls MigrationBench's own functions on the diff between the base commit and the agent's branch. It runs on this machine's Java 17, never in the agent VM. `GRADE_OFFICIAL=1` runs the stock `run_eval` as well and records whether the two agree.
+- Cents are the sum of `chargedCents` over the team usage ledger's events for the agent's `cloudAgentId`. `total_cents` is the undiscounted token price. `agent.getUsage()` is not used: it reports zero for plan-included usage.
+- Calls are distinct tool calls seen on the run stream. Minutes are the run's wall clock, including the JDK install at the start.
+- Branches: the prompt names the branch (`migrate/<run>`) and tells the agent to create it first and push it last. Cloud agents do not commit or push on the agent's behalf, so when the branch is missing after a run the harness sends one more message asking for the commit and push; `nudged` in the summary marks those runs.
+- Retry cents are the ledger events from the retry's start time onward.
 
 ## Limits
 

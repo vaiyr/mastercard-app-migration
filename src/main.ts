@@ -257,26 +257,26 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   for (const name of ["CURSOR_API_KEY", "CURSOR_ADMIN_API_KEY", "GITHUB_TOKEN", "FORK_OWNER", "MIGRATIONBENCH_DIR", "MIGRATIONBENCH_PYTHON", "JAVA17_HOME", "MAVEN_HOME"]) need(name);
   const reports: Report[] = [];
-  let work: Array<() => Promise<Report>>;
+  let work: Array<{ name: string; run: () => Promise<Report> }>;
   if (options.retryRun) {
     const previous = (await loadRunReports(options.retryRun)).filter((report) => !options.only || report.repo.includes(options.only));
     const misses = previous.filter((report) => !report.verdict.maximal && !report.error).length;
     process.stderr.write(`Run ${options.name}: retry of ${options.retryRun}, ${misses} of ${previous.length} agents get one more turn\n`);
-    work = previous.map((report) => () => retryOne(report, options));
+    work = previous.map((report) => ({ name: report.repo, run: () => retryOne(report, options) }));
   } else {
     const model = await pinModel(options.model);
     const repos = await loadRepos(options.repos, options.only);
     process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}, maven-errors=${options.mavenErrors}\n`);
-    work = repos.map((repo) => () => runOne(repo, options, model));
+    work = repos.map((repo) => ({ name: repo.name, run: () => runOne(repo, options, model) }));
   }
 
   const queue = [...work];
   const workers = Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
     for (let job = queue.shift(); job; job = queue.shift()) {
       try {
-        reports.push(await job());
+        reports.push(await job.run());
       } catch (error) {
-        log("run", `failed: ${error instanceof Error ? error.message : String(error)}`);
+        log(job.name, `failed: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
       }
     }

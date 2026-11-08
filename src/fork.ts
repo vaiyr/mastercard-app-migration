@@ -4,7 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { scrub } from "./env.js";
 import { authedRemote, ensurePrivateRepo } from "./github.js";
-import { HARNESS_PATHS, injectHarness } from "./harness.js";
+import { EXCLUDED_PATHS, injectHarness } from "./harness.js";
 import type { RepoRef, Setup } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -77,9 +77,9 @@ export async function fetchBranch(checkout: string, forkUrl: string, branch: str
   return `fork/${branch}`;
 }
 
-/** The migration as the grader sees it: everything from the base commit except the harness files. */
+/** The migration as the grader sees it: everything from the base commit except harness files and build output. */
 export async function sourceDiff(checkout: string, baseCommit: string, headRef: string): Promise<string> {
-  const excludes = HARNESS_PATHS.map((entry) => `:(exclude)${entry}`);
+  const excludes = EXCLUDED_PATHS.map((entry) => `:(exclude)${entry}`);
   return git(["diff", "--binary", `${baseCommit}..${headRef}`, "--", ".", ...excludes], checkout);
 }
 
