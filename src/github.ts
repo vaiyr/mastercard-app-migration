@@ -41,10 +41,13 @@ export async function ensurePrivateRepo(token: string, owner: string, name: stri
     auto_init: false,
     description: "Fork used by the Java migration harness",
   });
-  if (created.status !== 201) {
-    throw new Error(`Could not create ${owner}/${name} (${created.status}): ${JSON.stringify(created.json).slice(0, 200)}`);
+  if (created.status === 201) return url;
+  // Four runs starting at once all see "missing" and all try to create; the losers get 422 "name already exists".
+  if (created.status === 422 && JSON.stringify(created.json).includes("already exists")) {
+    const again = await api(token, "GET", `/repos/${owner}/${name}`);
+    if (again.status === 200) return url;
   }
-  return url;
+  throw new Error(`Could not create ${owner}/${name} (${created.status}): ${JSON.stringify(created.json).slice(0, 200)}`);
 }
 
 export function authedRemote(url: string, token: string): string {
