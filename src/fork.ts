@@ -50,6 +50,8 @@ export async function prepareFork(input: {
   owner: string;
   token: string;
   workRoot: string;
+  /** The branch the agent will push. A leftover from an earlier run with the same name is deleted first. */
+  runBranch: string;
 }): Promise<PreparedFork> {
   const { repo, setup, token } = input;
   const forkUrl = await ensurePrivateRepo(token, input.owner, repo.name);
@@ -68,6 +70,9 @@ export async function prepareFork(input: {
   await git(["commit", "--quiet", "-m", `Add the migration harness (${setup}, Java ${input.target})`], checkout, token);
   const harnessCommit = (await git(["rev-parse", "HEAD"], checkout, token)).trim();
   await git(["push", "--quiet", "--force", authedRemote(forkUrl, token), `${harnessBranch}:${harnessBranch}`], checkout, token);
+  if (await remoteBranchSha(forkUrl, input.runBranch, token)) {
+    await git(["push", "--quiet", authedRemote(forkUrl, token), "--delete", input.runBranch], checkout, token);
+  }
   return { forkUrl, checkout, harnessCommit, harnessBranch };
 }
 

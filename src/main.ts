@@ -61,6 +61,7 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     owner: need("FORK_OWNER"),
     token: need("GITHUB_TOKEN"),
     workRoot: path.join(options.out, "work", options.name),
+    runBranch: `migrate/${options.name}`,
   });
 
   let mavenErrors: string | undefined;
