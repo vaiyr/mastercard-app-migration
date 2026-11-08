@@ -19,8 +19,8 @@ export interface UsageEvent {
 }
 
 const PAD_BEFORE_MS = 60 * 60_000;
-/** Ledger events land within a few minutes of a run. A later turn on the same agent must not be counted. */
-const PAD_AFTER_MS = 15 * 60_000;
+/** Event timestamps are request times inside the run, so a short pad covers clock skew without catching a later turn on the same agent. */
+const PAD_AFTER_MS = 3 * 60_000;
 
 export async function fetchUsageEvents(adminKey: string, agentId: string, startedAt: string, endedAt: string): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
