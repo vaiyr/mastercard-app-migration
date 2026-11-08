@@ -87,10 +87,11 @@ def models(paths, labels, out):
 
 
 def strips(paths, labels, out):
-    fig, ax = plt.subplots(figsize=(8, 1.4 + 0.9 * len(paths)), dpi=200)
+    fig, ax = plt.subplots(figsize=(10, 1.4 + 0.9 * len(paths)), dpi=200)
     style(ax)
     ax.xaxis.grid(True, color=GRID, linewidth=0.8)
     ax.yaxis.grid(False)
+    notes = []
     for index, (path, label) in enumerate(zip(paths, labels)):
         rows = load(path)
         color = SERIES[index % len(SERIES)]
@@ -101,12 +102,19 @@ def strips(paths, labels, out):
         ax.scatter(failed, jitter(len(failed)), s=34, facecolors="white", edgecolors=color, linewidths=1.5, zorder=3)
         total = sum(cents(row) for row in rows) / 100
         minutes = sum(float(row["minutes"] or 0) for row in rows) / max(len(rows), 1)
-        ax.annotate(f"{len(passed)}/{len(rows)} passed   ${total:.2f} total   {minutes:.1f} min/app",
-                    (1.0, index), xycoords=("axes fraction", "data"), textcoords="offset points", xytext=(-4, 9), ha="right", fontsize=8.5, color=INK_2)
+        notes.append(f"{len(passed)}/{len(rows)} passed\n${total:.2f}, {minutes:.1f} min/app")
     ax.set_yticks(range(len(paths)))
     ax.set_yticklabels(labels, color=INK)
-    ax.invert_yaxis()
+    twin = ax.twinx()
+    twin.set_ylim(ax.get_ylim())
+    twin.set_yticks(range(len(paths)))
+    twin.set_yticklabels(notes, color=INK_2, fontsize=8.5)
+    for side in ("top", "right", "left", "bottom"):
+        twin.spines[side].set_visible(False)
+    twin.tick_params(length=0)
     ax.set_xlim(left=0)
+    ax.invert_yaxis()
+    twin.set_ylim(ax.get_ylim())
     ax.set_xlabel("dollars charged per app, including any retry (filled = passed all five checks)", color=INK_2)
     ax.set_title("Every Mastercard reference app not yet on Java 17: two setups, two models", loc="left", color=INK, fontsize=11)
     fig.tight_layout()

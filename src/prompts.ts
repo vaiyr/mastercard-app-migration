@@ -1,6 +1,6 @@
 import type { Setup, Verdict } from "./types.js";
 
-export function firstPrompt(setup: Setup, target: string, budget: number, branch: string, mavenErrors?: string): string {
+export function firstPrompt(setup: Setup, target: string, budget: number, branch: string): string {
   const lines = [
     `Migrate this Maven project to Java ${target}. Read AGENTS.md first.`,
     `First command: git checkout -b ${branch}`,
@@ -15,13 +15,6 @@ export function firstPrompt(setup: Setup, target: string, budget: number, branch
     `Last step, always, even if verify still fails: git add -A && git commit -m "Migrate to Java ${target}" && git push origin ${branch}. Only what is pushed to ${branch} reaches the grader.`,
     "An external grader decides the result. Do not claim the migration passed; end with the compiler and test errors that remain.",
   ];
-  if (mavenErrors) {
-    lines.push(
-      "Maven was run once on this tree before your first turn. These are its compiler and test errors. Fix them; a file that is not listed still has to compile.",
-      "Errors:",
-      mavenErrors,
-    );
-  }
   return lines.filter(Boolean).join("\n");
 }
 

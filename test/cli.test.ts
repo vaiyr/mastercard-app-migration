@@ -9,18 +9,16 @@ test("setup and repos are required", () => {
 });
 
 test("flags parse with defaults", () => {
-  const options = parseArgs(["--setup", "h2", "--repos", "repos/practice.csv", "--retry", "--maven-errors", "--concurrency", "4", "--name", "x"]);
+  const options = parseArgs(["--setup", "h2", "--repos", "repos/practice.csv", "--retry", "--concurrency", "4", "--name", "x"]);
   assert.equal(options.setup, "h2");
   assert.equal(options.model, "composer-2.5");
   assert.equal(options.budget, 200);
   assert.equal(options.target, "17");
   assert.equal(options.concurrency, 4);
   assert.equal(options.retry, true);
-  assert.equal(options.mavenErrors, true);
   assert.equal(options.name, "x");
 });
 
-test("maven errors only make sense for h2 and concurrency is capped", () => {
-  assert.throws(() => parseArgs(["--setup", "h1", "--repos", "a.csv", "--maven-errors"]), /only applies/);
+test("concurrency is capped", () => {
   assert.throws(() => parseArgs(["--setup", "h1", "--repos", "a.csv", "--concurrency", "9"]), /1 to 5/);
 });

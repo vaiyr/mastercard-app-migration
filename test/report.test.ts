@@ -6,7 +6,7 @@ import type { Report } from "../src/types.js";
 test("a report becomes one csv row with every column", () => {
   const report: Report = {
     run: "r", repo: "a", upstreamUrl: "u", baseCommit: "b", forkUrl: "f", harnessCommit: "h",
-    setup: "h2", model: { id: "composer-2.5" }, target: "17", retry: true, mavenErrors: false,
+    setup: "h2", model: { id: "composer-2.5" }, target: "17", retry: true,
     agentId: "bc-1", agentUrl: "https://cursor.com/agents/bc-1", branch: "cursor/x",
     attempts: [
       { kind: "first", stopReason: "finished", startedAt: "s", endedAt: "e", minutes: 3, calls: 20, cost: { chargedCents: 3.4, totalCents: 5, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, events: 2 } },

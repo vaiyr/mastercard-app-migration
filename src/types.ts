@@ -6,7 +6,6 @@ export interface Options {
   repos: string;
   only?: string;
   retry: boolean;
-  mavenErrors: boolean;
   concurrency: number;
   budget: number;
   target: "17" | "21";
@@ -96,7 +95,6 @@ export interface Report {
   model: PinnedModel;
   target: string;
   retry: boolean;
-  mavenErrors: boolean;
   agentId: string;
   agentUrl: string;
   branch?: string;

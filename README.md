@@ -1,16 +1,35 @@
 # Java 8 to 17 for Mastercard's reference apps, with Cursor cloud agents
 
 <p align="center">
-  <img src="results/figures/mastercard.png" alt="Every Mastercard reference app, two setups, two models: dollars per app, filled when all five checks passed."/>
+  <img src="results/figures/fleet.png" alt="Every Mastercard reference app not yet on Java 17, two setups, two models: one dot per app at its dollar cost, filled when all five checks passed."/>
 </p>
 
-<p align="center"><em>Two ways to use a cloud agent, two models, every Mastercard reference app that is not yet on Java 17. Pass or fail comes from an independent grader; dollars come from the usage ledger.</em></p>
+<p align="center"><em>Two ways to use a cloud agent, two models, every Mastercard reference app that is not yet on Java 17. Pass or fail comes from an independent grader; dollars come from the usage ledger. The five identity and issuing apps on their own are in <code>results/figures/mastercard.png</code>.</em></p>
 
 Mastercard's client-library policy says Java 17 and above. Of its 56 public Java repositories, 32 still build on Java 7, 8 or 11. This harness forks such an app, hands it to a Cursor cloud agent with a pinned set of instructions and tools, grades the branch the agent pushes with five checks on a machine the agent never touches, and writes one row per run: repo, setup, model, the five checks, tool calls, minutes, and the cents the usage ledger charged.
 
 ## What we found
 
-RESULTS_PLACEHOLDER
+All numbers are from `results/*.csv`, produced on 8 Nov 2026. Models are Composer 2.5 and Grok 4.7 with fast mode off and every other parameter at its default (the ledger bills Grok as `grok-4.7-high`). Dollars are what the usage ledger charged, including any retry. Nothing was tuned on these repos; the harness was checked once on a sixth app of the same template and then run.
+
+Every Mastercard reference app not yet on Java 17 (32 apps: 7 on Java 7, 19 on Java 8, 6 on Java 11), each shape once with each model, one retry allowed:
+
+| Model | Setup | Passed | Total | Per app | Minutes per app | Calls per app |
+| --- | --- | --- | --- | --- | --- | --- |
+| Composer 2.5 | H2, static rewrite plus agent | 28/32 | $3.43 | $0.11 | 3.5 | 43 |
+| Composer 2.5 | H1, minimal harness | 28/32 | $3.94 | $0.12 | 3.9 | 68 |
+| Grok 4.7 | H2, static rewrite plus agent | 30/32 | $17.21 | $0.54 | 7.3 | 64 |
+| Grok 4.7 | H1, minimal harness | 31/32 | $18.65 | $0.58 | 8.1 | 94 |
+
+Twenty-eight of the 32 apps pass in every cell. The whole Java 7 and Java 11 groups pass with the cheap model. The four apps that separate the cells are crossborder, personalized-offers, send-disbursements and send-funding: their test suites fail at the base commit on our machine, Composer could not get any of them green in either setup, Grok got two (H2) and three (H1), at $0.84 to $1.82 per app. Grok's one miss on H1 is crossborder, where it changed the test set and r3 caught it.
+
+What the shape buys: on Composer the pom rewrite cuts tool calls by a third and the bill by 13 percent for the same 28 passes, and its diffs are smaller (issuing is a four-line `pom.xml` change under H2 and eight files under H1). On Grok the rewrite saves 8 percent and costs one app. The model buys more than the shape: Grok passes two or three more apps than Composer and charges five times as much for the fleet. Per extra app, that is about $7.
+
+What the retry buys: on Composer H2 it was sent 11 times and turned 7 of them green for $1.13 of the $3.43; the typical fix is a dependency below its required major, repaired in under a minute for 2 to 4 cents. Issuing does this every time, which is why it is the live demo: three timed runs went miss, retry, green in 1.6 to 3.8 agent minutes for 4 to 15 cents.
+
+The five identity and issuing apps alone (idp, rp, idassist, issuing, tp), the same four cells, all 5/5: Composer H2 $0.32, Composer H1 $0.47, Grok H2 $2.74, Grok H1 $3.37.
+
+What we found and changed along the way, all of it in the commit history: cloud agents never push on their own (the prompt now names the branch and the harness nudges once); agents commit `target/` when a repo has no `.gitignore`; Composer needs 40 to 130 tool calls on these apps, so the old 80-call budget was cancelling passing runs; the first lookup server used the wrong wire framing and no agent ever reached it; four runs creating the same fork at once race; and the grader's failure list had to name the file or dependency, not just the check, before a retry could act on it.
 
 ## How a run works
 
@@ -60,7 +79,7 @@ src/            The harness. main.ts runs repos through fork, agent, grader, led
 grader/         grade.py (the five checks), dependency_version.json, requirements.txt.
 harness/        Files copied into every fork: AGENTS.md, .cursor/ (bootstrap, hooks, skill, MCP), tools/.
 repos/          mastercard.csv (the five identity and issuing apps), fleet.csv (all 32), proof.csv.
-results/        summary.csv per reported run, and the figure.
+results/        summary.csv per reported run, and the figures.
 scripts/        summarize.py prints tables; figures.py draws the figure.
 test/           Unit tests for the TypeScript and the Python copied into forks.
 ```

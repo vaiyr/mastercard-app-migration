@@ -11,7 +11,6 @@ export const USAGE = `Usage: npm run harness -- --setup h1|h2 --repos repos/<set
   --only <text>         Run only rows whose name or url contains this text.
   --model <id>          Catalog id from Cursor.models.list(). Default composer-2.5.
   --retry               After grading, send the failed checks back to the same agent once.
-  --maven-errors        h2 only. Run Maven locally on the bumped tree and put its errors in the first prompt.
   --concurrency <n>     Agents in flight at once, 1 to ${MAX_CONCURRENCY}. Default 1.
   --budget <n>          Tool calls per agent before the run is cancelled. Default 200.
   --target 17|21        Java release to land on. Default 17.
@@ -40,7 +39,6 @@ export function parseArgs(argv: string[]): Options {
     model: "composer-2.5",
     only: undefined as string | undefined,
     retry: false,
-    mavenErrors: false,
     concurrency: 1,
     budget: 200,
     target: "17" as "17" | "21",
@@ -70,9 +68,6 @@ export function parseArgs(argv: string[]): Options {
       case "--retry":
         options.retry = true;
         break;
-      case "--maven-errors":
-        options.mavenErrors = true;
-        break;
       case "--concurrency":
         options.concurrency = integer(flag, value(argv, i++), 1, MAX_CONCURRENCY);
         break;
@@ -97,7 +92,6 @@ export function parseArgs(argv: string[]): Options {
   }
   if (!setup) throw new Error(`--setup is required\n\n${USAGE}`);
   if (!repos) throw new Error(`--repos is required\n\n${USAGE}`);
-  if (options.mavenErrors && setup !== "h2") throw new Error("--maven-errors only applies to --setup h2");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   return {
     ...options,

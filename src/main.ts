@@ -6,7 +6,6 @@ import { loadDotEnv, need } from "./env.js";
 import { fetchBranch, prepareFork, remoteBranchSha, sourceDiff } from "./fork.js";
 import { gradeDiff, failedVerdict } from "./grade.js";
 import { emptyCost, eventsFrom, settledEvents, sumEvents } from "./ledger.js";
-import { captureMavenErrors } from "./maven.js";
 import { pinModel } from "./model.js";
 import { firstPrompt, retryPrompt } from "./prompts.js";
 import { appendSummary, writeReport } from "./report.js";
@@ -66,15 +65,6 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     runName: options.name,
   });
 
-  let mavenErrors: string | undefined;
-  if (options.mavenErrors) {
-    log(repo.name, "running Maven locally on the bumped tree");
-    const captured = await captureMavenErrors(fork.checkout);
-    await writeFile(path.join(dir, "maven-errors.log"), captured.full);
-    await writeFile(path.join(dir, "maven-errors.txt"), `${captured.errors}\n`);
-    mavenErrors = captured.errors;
-  }
-
   const ndjsonPath = path.join(dir, "run.ndjson");
   const branchName = `migrate/${options.name}`;
   const common = {
@@ -92,7 +82,7 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
   };
 
   log(repo.name, `starting ${model.id} agent`);
-  const first = await runAgent({ ...common, prompt: firstPrompt(options.setup, options.target, options.budget, branchName, mavenErrors) }, "first");
+  const first = await runAgent({ ...common, prompt: firstPrompt(options.setup, options.target, options.budget, branchName) }, "first");
   const attempts: Attempt[] = [first.attempt];
   let branch = first.attempt.branch;
   log(repo.name, `agent ${first.attempt.stopReason} in ${first.attempt.minutes} min, ${first.attempt.calls} calls, branch ${branch ?? "none"}${first.attempt.error ? `, error: ${first.attempt.error}` : ""}`);
@@ -145,7 +135,6 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     model,
     target: options.target,
     retry: options.retry,
-    mavenErrors: options.mavenErrors,
     agentId: first.agent.agentId,
     agentUrl: agentUrl(first.agent.agentId),
     branch,
@@ -171,7 +160,7 @@ async function main(): Promise<void> {
   const reports: Report[] = [];
   const model = await pinModel(options.model);
   const repos = await loadRepos(options.repos, options.only);
-  process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}, maven-errors=${options.mavenErrors}\n`);
+  process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}\n`);
   const work = repos.map((repo) => ({ name: repo.name, run: () => runOne(repo, options, model) }));
 
   const queue = [...work];

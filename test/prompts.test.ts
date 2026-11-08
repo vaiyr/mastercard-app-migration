@@ -16,12 +16,6 @@ test("h1 prompt names the lookup tool, h2 names the pom bump", () => {
   assert.match(firstPrompt("h2", "17", 80, "migrate/x"), /bootstrap-jdks\.sh/);
 });
 
-test("maven errors are appended once", () => {
-  const prompt = firstPrompt("h2", "17", 80, "migrate/x", "[ERROR] Foo.java:[3,8] cannot find symbol");
-  assert.match(prompt, /cannot find symbol/);
-  assert.equal(prompt.split("Errors:").length, 2);
-});
-
 test("the retry lists only the failed checks", () => {
   const list = failureList(r5Miss);
   assert.match(list, /r5 FAIL/);
