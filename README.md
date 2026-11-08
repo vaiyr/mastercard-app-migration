@@ -10,7 +10,34 @@ Mastercard's client-library policy says Java 17 and above. Of its 56 public Java
 
 ## What we found
 
-RESULTS_PLACEHOLDER
+All numbers below are from `results/*.csv`, produced on 8 Nov 2026 with Composer 2.5 and Grok 4.7 (fast mode off, other parameters at their defaults; the ledger bills Grok as `grok-4.7-high`). Dollars are what the usage ledger charged.
+
+Practice set, 12 small Java 8 Spring Boot apps, Composer 2.5:
+
+| Step | Passed | Spend so far | Agent minutes per app |
+| --- | --- | --- | --- |
+| H1: agent migrates, lookup tool | 10/12 | $2.00 | 3.6 |
+| H1, then one retry on the misses | 11/12 | $2.69 | 5.9 |
+| H2: script bumps the pom, agent repairs | 9/12 | $1.98 | 4.1 |
+| H2, then one retry on the misses | 10/12 | $2.76 | 5.3 |
+| H2, retry, then Maven errors in the prompt for the rest | 11/12 | $3.33 | |
+
+On twelve apps the two setups tie. Each lever bought about one more app for about 70 cents. The retry is cheap when the miss is small: a single dependency below its major (r5) was fixed for 2 cents in 7 tool calls. It is expensive when the first attempt was already lost: the two apps that burned the 200-call budget cost $0.30 to $0.50 more each on retry, and one of them (spring-react-boilerplate) only passed once Maven's own errors were in the first prompt. The one app neither setup passed, java-getting-started, failed r3 because the agent added a helper file under `src/test`; the strict test-set rule counts that as a changed test suite.
+
+Mastercard apps (rp, idassist, issuing), same shapes, nothing tuned on them:
+
+| Model | Setup | Passed | Total | Per app | Minutes per app | Calls per app |
+| --- | --- | --- | --- | --- | --- | --- |
+| Composer 2.5 | H2 + Maven errors + retry | 3/3 | $0.22 | $0.07 | 1.9 | 42 |
+| Composer 2.5 | H1 + retry | 3/3 | $0.43 | $0.14 | 3.2 | 71 |
+| Grok 4.7 | H2 + Maven errors + retry | 3/3 | $1.44 | $0.48 | 6.1 | 60 |
+| Grok 4.7 | H1 + retry | 3/3 | $2.27 | $0.76 | 9.1 | 94 |
+
+Every cell passed. The expensive model cost 5 to 7 times more and took 3 times longer for the same five green checks. On the Mastercard apps the pom-bump setup halved Composer's cost and produced smaller diffs: issuing under H2 is a four-line `pom.xml` change; under H1 the same green touched eight files and about 140 lines, including a rewritten test.
+
+Issuing always misses r5 on the first pass, because its mockito and awaitility versions are `${property}` references that the bump script leaves alone by design, and the retry always fixes it. Three runs: 36, 38 and 31 tool calls, 1.6 to 2.0 agent minutes, 4 to 7 cents each, green all three times. The two demo-reserved apps also passed first time: idp in 21 calls and 1.4 minutes for 3 cents, tp in 57 calls and 3.2 minutes for 11 cents.
+
+What changed against the earlier numbers from this repo (7/12 and 8/12 on practice, Grok red on all three): the earlier lookup server used the wrong framing, so no H1 agent ever reached it; agents were cancelled at 80 tool calls, which most runs here exceed; and cloud agents do not push on their own, so every earlier Grok run and a third of all earlier runs ended with no branch and were graded as failures. Total ledger spend for everything in this README, including probes and runs lost to harness bugs along the way, was $12.25; the runs in `results/` account for $10.92 of it.
 
 ## How a run works
 
@@ -92,23 +119,34 @@ Each command writes `out/<name>/summary.csv` plus a folder per repo with `report
 # 1. One app, to prove the plumbing. GRADE_OFFICIAL=1 also runs stock run_eval and records agreement.
 GRADE_OFFICIAL=1 npm run harness -- --setup h2 --repos repos/practice.csv --only demo-security-spring2 --name proof
 
-# 2. Practice set, both setups.
+# 2. Practice set, both setups, fresh agents.
 npm run harness -- --setup h1 --repos repos/practice.csv --concurrency 4 --name practice-h1
 npm run harness -- --setup h2 --repos repos/practice.csv --concurrency 4 --name practice-h2
 
-# 3. Levers on the better setup.
-npm run harness -- --setup h2 --repos repos/practice.csv --concurrency 4 --retry --name practice-h2-retry
-npm run harness -- --setup h2 --repos repos/practice.csv --concurrency 4 --retry --maven-errors --name practice-h2-retry-errors
+# 3. Retry lever: resume only the agents that missed, once, with the failed checks.
+npm run harness -- --retry-run out/practice-h1 --concurrency 3
+npm run harness -- --retry-run out/practice-h2 --concurrency 3
 
-# 4. Mastercard apps, same shape, cheap model then expensive model.
-npm run harness -- --setup h2 --repos repos/mastercard.csv --concurrency 3 --retry --maven-errors --name mastercard-composer
-npm run harness -- --setup h2 --repos repos/mastercard.csv --concurrency 3 --retry --maven-errors --model grok-4.7 --name mastercard-grok
+# 4. Maven-errors lever on whatever is still red after step 3 (two apps in our run).
+#    Put those rows in a CSV, then start fresh agents with Maven's errors in the prompt.
+npm run harness -- --setup h2 --repos reds.csv --maven-errors --retry --concurrency 2 --name practice-h2-errors
 
-# Tables from any set of summaries.
+# 5. Mastercard apps: both shapes, cheap model then expensive model. Nothing here was tuned on them.
+npm run harness -- --setup h2 --repos repos/mastercard.csv --concurrency 3 --retry --maven-errors --name mastercard-composer-h2
+npm run harness -- --setup h1 --repos repos/mastercard.csv --concurrency 3 --retry --name mastercard-composer-h1
+npm run harness -- --setup h2 --repos repos/mastercard.csv --concurrency 3 --retry --maven-errors --model grok-4.7 --name mastercard-grok-h2
+npm run harness -- --setup h1 --repos repos/mastercard.csv --concurrency 3 --retry --model grok-4.7 --name mastercard-grok-h1
+
+# 6. Demo apps (kept out of every tuning run) and the live-demo script, which is issuing alone.
+npm run harness -- --setup h2 --repos repos/demo.csv --concurrency 2 --retry --maven-errors --name demo-idp-tp
+npm run harness -- --setup h2 --repos repos/mastercard.csv --only issuing --retry --maven-errors --name demo-issuing
+
+# Tables and figures from any set of summaries.
 python3 scripts/summarize.py out/*/summary.csv
+python3 scripts/figures.py ladder results/practice-h1.csv results/practice-h1-retry.csv -o ladder.png
 ```
 
-If the ledger had not settled when a run finished, `npm run costs -- out/<name>` re-reads it and rewrites the cost columns.
+Ledger events can land a minute after a run ends. `npm run costs -- out/<name>` re-reads the ledger for every report in a run and rewrites the cost columns; run it once a batch is done. Two processes must not run the same repo under the same run name at once; different run names are fine, since each pushes its own `harness/<run>` branch.
 
 ## Run it on another repo
 

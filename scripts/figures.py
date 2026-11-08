@@ -4,7 +4,9 @@
     python3 scripts/figures.py ladder results/practice-h1.csv results/practice-h2.csv ... -o results/figures/ladder.png
     python3 scripts/figures.py models results/mastercard-composer.csv results/mastercard-grok.csv -o results/figures/mastercard.png
 
-ladder: one bar per run (passes out of n) with total dollars under each label.
+ladder: one bar per step (distinct repos passing) with the step's total dollars under
+each label. A step CSV may list a repo twice (first run plus a later lever); passes
+count the repo once and dollars count every run.
 models: one row per repo, one marker per model, x = dollars, filled when the run passed.
 """
 
@@ -51,9 +53,10 @@ def ladder(paths, labels, out):
     xs, passes, totals, n = [], [], [], 0
     for index, path in enumerate(paths):
         rows = load(path)
-        n = max(n, len(rows))
+        repos = {row["repo"] for row in rows}
+        n = max(n, len(repos))
         xs.append(index)
-        passes.append(sum(row["maximal"] == "1" for row in rows))
+        passes.append(len({row["repo"] for row in rows if row["maximal"] == "1"}))
         totals.append(sum(cents(row) for row in rows) / 100)
     bars = ax.bar(xs, passes, width=0.55, color=SERIES[0], linewidth=0)
     for bar, value in zip(bars, passes):
@@ -76,28 +79,33 @@ def models(paths, labels, out):
         for row in rows:
             if row["repo"] not in repos:
                 repos.append(row["repo"])
-    fig, ax = plt.subplots(figsize=(8, 1.2 + 0.7 * len(repos)), dpi=200)
+    count = len(rows_by_model)
+    fig, ax = plt.subplots(figsize=(8, 1.6 + 1.1 * len(repos)), dpi=200)
     style(ax)
     ax.xaxis.grid(True, color=GRID, linewidth=0.8)
     ax.yaxis.grid(False)
+    step = 0.8 / max(count, 1)
     for index, (label, by_repo) in enumerate(rows_by_model.items()):
         color = SERIES[index % len(SERIES)]
+        offset = (index - (count - 1) / 2) * step
         for y, repo in enumerate(repos):
             row = by_repo.get(repo)
             if not row:
                 continue
             dollars = cents(row) / 100
             passed = row["maximal"] == "1"
-            ax.scatter(dollars, y, s=90, color=color if passed else "white", edgecolors=color, linewidths=2, zorder=3,
+            ax.scatter(dollars, y + offset, s=70, color=color if passed else "white", edgecolors=color, linewidths=2, zorder=3,
                        label=label if y == 0 else None)
-            ax.annotate(f"${dollars:.2f}" + ("" if passed else " fail"), (dollars, y), textcoords="offset points", xytext=(8, -3), fontsize=9, color=INK_2)
+            ax.annotate(f"${dollars:.2f}" + ("" if passed else "  fail"), (dollars, y + offset), textcoords="offset points", xytext=(8, -3), fontsize=8.5, color=INK_2)
+        for y in range(len(repos) - 1):
+            ax.axhline(y + 0.5, color=GRID, linewidth=0.8)
     ax.set_yticks(range(len(repos)))
     ax.set_yticklabels([repo.replace("mastercard-", "").replace("-reference-app", "") for repo in repos], color=INK)
     ax.invert_yaxis()
-    ax.set_xlabel("dollars charged per app (filled = passed all five checks)", color=INK_2)
-    ax.set_xlim(left=0)
-    ax.legend(frameon=False, loc="lower right", fontsize=9)
-    ax.set_title("Mastercard apps: cheap model against expensive model, same setup", loc="left", color=INK, fontsize=12)
+    ax.set_xlabel("dollars charged per app, including any retry (filled = passed all five checks)", color=INK_2)
+    ax.set_xlim(0, ax.get_xlim()[1] * 1.12)
+    ax.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=min(count, 4), fontsize=9)
+    ax.set_title("Mastercard apps: every cell passed; the cheap model did it for a fifth of the price", loc="left", color=INK, fontsize=11, pad=28)
     fig.tight_layout()
     fig.savefig(out)
 
