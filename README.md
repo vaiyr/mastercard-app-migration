@@ -51,9 +51,9 @@ All 32 apps, each setup once with each model, one retry allowed, 8 Nov 2026. Dol
 | Grok 4.7 | H1 | 31/32 | $18.65 | $0.58 | 8.1 | 94 |
 
 - **28 apps migrate in every cell for about a dime each.** That includes all 7 Java 7 and all 6 Java 11 apps.
-- **The 4 that differ already fail their tests at the base commit.** Composer got none of them; Grok got two on H2 and three on H1, at $0.84 to $1.82 each.
+- **The 4 that differ cannot pass without invented code.** Their Spring Boot tests load a `.p12` signing key that is not in the repo, so every test errors at the base commit and after any correct migration. Composer migrated them, read the stack trace, and stopped, saying the grader would have to supply credentials.
 - **The static rewrite cuts cost and review load.** On Composer it is a third fewer tool calls and 13 percent less money for the same 28, and issuing becomes a four-line `pom.xml` change instead of eight files.
-- **The expensive model buys two or three apps for five times the bill.** About $7 per extra app.
+- **Grok's extra passes are fakes, not migrations.** On all four it made the production config fall back to a stub backend when the key is missing, with canned responses reverse-engineered from the test assertions, at $0.91 to $1.82 each. Whether that passed depended on where the stub landed: in `src/main` the grader cannot see it, in `src/test` r3 flags it. A reviewer would reject both, which makes the cheap model's honest stop the better result.
 - **The retry pays for itself.** On Composer H2 it fired 11 times and fixed 7 for $1.13 of the $3.43, usually one dependency below its major, fixed in a minute for a few cents.
 
 ## Repo layout
