@@ -74,7 +74,6 @@ def strips(paths, labels, out):
     ax.invert_yaxis()
     twin.set_ylim(ax.get_ylim())
     ax.set_xlabel("Cost per migration", color=INK_2)
-    ax.text(0.0, -0.17, "One dot per app. Filled: all five checks passed. Hollow: at least one failed.", transform=ax.transAxes, fontsize=7.5, color=INK_2, va="top")
     fig.tight_layout()
     fig.savefig(out)
 
