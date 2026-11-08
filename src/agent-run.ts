@@ -5,7 +5,6 @@ import { MAX_MINUTES } from "./limits.js";
 import { promptFor, retryPrompt } from "./prompts.js";
 import type { PinnedModel, Setup } from "./types.js";
 import { selectionFrom } from "./model.js";
-import { ensureDockerfileImage } from "./environment.js";
 import { runWindow } from "./time.js";
 import { absentUsage, snapshotFromUsage, type UsageSnapshot } from "./usage.js";
 
@@ -75,16 +74,8 @@ export async function runCloudAgent(input: {
   mavenErrors?: string;
 }): Promise<{ agent: SDKAgent; capture: RunCapture }> {
   const model = selectionFrom(input.model);
-  let envName: string | undefined;
   if (!input.resumeId) {
-    try {
-      const image = await ensureDockerfileImage(input.forkUrl);
-      envName = image.name;
-      process.stderr.write(`${image.note}\n`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`Dockerfile image was not activated: ${message}\n`);
-    }
+    process.stderr.write("Dockerfile image was not selected\n");
   }
   const agent = input.resumeId
     ? await Agent.resume(input.resumeId, {
@@ -96,7 +87,6 @@ export async function runCloudAgent(input: {
         name: `harness-${input.setup}-${input.model.id}-${input.repoLabel}`.slice(0, 80),
         mcpServers: mcpServers(input.setup),
         cloud: {
-          ...(envName ? { env: { type: "cloud" as const, name: envName } } : {}),
           repos: [{ url: input.forkUrl, startingRef: input.startingRef ?? "main" }],
           autoCreatePR: false,
           metadata: {

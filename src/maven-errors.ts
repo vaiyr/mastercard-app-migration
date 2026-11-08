@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -19,26 +21,23 @@ export function extractMavenErrors(log: string, limit = 20_000): string {
 
 export async function captureMavenErrors(checkout: string): Promise<{ full: string; errors: string }> {
   let full = "";
+  const javaHome = process.env.HARNESS_PREPASS_JAVA_HOME || "/opt/java/temurin-17";
+  const mvn = process.env.HARNESS_MVN || "/opt/maven/bin/mvn";
+  const repoLocal = path.join(tmpdir(), "migration-harness-m2", path.basename(checkout) || "repo");
   try {
     const { stdout, stderr } = await execFileAsync(
-      "docker",
-      [
-        "run",
-        "--rm",
-        "-v",
-        `${checkout}:/workspace`,
-        "-w",
-        "/workspace",
-        "-u",
-        "1000:1000",
-        "migration-bench:latest",
-        "mvn",
-        "-B",
-        "-DtrimStackTrace=false",
-        "clean",
-        "verify",
-      ],
-      { timeout: 20 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 },
+      mvn,
+      ["-B", "-DtrimStackTrace=false", `-Dmaven.repo.local=${repoLocal}`, "clean", "verify"],
+      {
+        cwd: checkout,
+        timeout: 20 * 60 * 1000,
+        maxBuffer: 32 * 1024 * 1024,
+        env: {
+          ...process.env,
+          JAVA_HOME: javaHome,
+          PATH: `${javaHome}/bin:/opt/maven/bin:${process.env.PATH ?? ""}`,
+        },
+      },
     );
     full = `${stdout ?? ""}\n${stderr ?? ""}`;
   } catch (error) {

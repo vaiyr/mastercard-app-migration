@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FORK_OWNER, forkCloneUrl, newRepoBody, orgRepoCreatePath, resolveForkOwner } from "../src/github.js";
+import { forkCloneUrl, newRepoBody, repoCreatePath, resolveForkOwner } from "../src/github.js";
 import { reusableHarnessCommit } from "../src/fork.js";
 import { includeCopiedPath } from "../src/inject.js";
 import { isUsageLimit, stopRemainingRepos } from "../src/agent-run.js";
@@ -12,16 +12,15 @@ test("new forks are created private", () => {
   assert.equal(newRepoBody("queue-ticket-api").private, true);
 });
 
-test("forks are created in the mastercard-app-migration organization", () => {
+test("a user fork is created with POST /user/repos", () => {
   const previous = process.env.HARNESS_FORK_OWNER;
   delete process.env.HARNESS_FORK_OWNER;
   try {
-    assert.equal(FORK_OWNER, "mastercard-app-migration");
-    assert.equal(orgRepoCreatePath(), "/orgs/mastercard-app-migration/repos");
-    assert.equal(forkCloneUrl("app"), "https://github.com/mastercard-app-migration/app");
-    assert.equal(resolveForkOwner(), "mastercard-app-migration");
-    assert.equal(resolveForkOwner("  mastercard-app-migration  "), "mastercard-app-migration");
-    assert.throws(() => resolveForkOwner("vaiyr"), /mastercard-app-migration/);
+    assert.throws(() => resolveForkOwner(), /HARNESS_FORK_OWNER/);
+    assert.equal(resolveForkOwner(" vaiyr "), "vaiyr");
+    assert.equal(repoCreatePath("User", "vaiyr"), "/user/repos");
+    assert.equal(forkCloneUrl("vaiyr", "app"), "https://github.com/vaiyr/app");
+    assert.equal(repoCreatePath("Organization", "acme"), "/orgs/acme/repos");
   } finally {
     if (previous === undefined) delete process.env.HARNESS_FORK_OWNER;
     else process.env.HARNESS_FORK_OWNER = previous;

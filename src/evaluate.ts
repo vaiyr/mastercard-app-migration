@@ -39,35 +39,13 @@ export async function patchEvaluatorDockerfile(root: string): Promise<string | n
   return `Patched evaluator Dockerfile JAVA_HOME to ${right}`;
 }
 
-async function imageExists(): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync("docker", ["images", "-q", "migration-bench:latest"], {
-      timeout: 20_000,
-    });
-    return stdout.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
 export async function ensureEvaluatorReady(): Promise<string[]> {
-  const notes: string[] = [];
   const root = migrationBenchRoot();
-  const patch = await patchEvaluatorDockerfile(root);
-  if (patch) notes.push(patch);
-  if (!(await imageExists())) {
-    notes.push("Building migration-bench image");
-    await execFileAsync(
-      "docker",
-      ["build", "-t", "migration-bench:latest", "-f", path.join(root, "Dockerfile"), root],
-      { timeout: 60 * 60 * 1000 },
-    );
-  }
   const runEval = path.join(root, "src", "migration_bench", "run_eval.py");
   if (!(await exists(runEval))) {
     throw new Error(`run_eval.py not found in ${root}`);
   }
-  return notes;
+  return ["Grader is python -m migration_bench.run_eval with JAVA_HOME=/opt/java/temurin-17. No Docker image."];
 }
 
 export interface EvalRequest {
@@ -89,17 +67,22 @@ export async function runEval(request: EvalRequest): Promise<{ log: string; pass
     request.diffPath,
     "--base_commit_id",
     request.baseCommit,
-    "--use_docker",
     "--require_compiled_java_major_version",
     String(classMajor(request.target)),
     "--is_maximal_migration",
     request.maximal ? "1" : "0",
   ];
+  const javaHome = "/opt/java/temurin-17";
   const { stdout, stderr } = await execFileAsync(pythonBin(), moduleArgs, {
     cwd: root,
     timeout: 60 * 60 * 1000,
     maxBuffer: 32 * 1024 * 1024,
-    env: process.env,
+    env: {
+      ...process.env,
+      JAVA_HOME: javaHome,
+      PATH: `${javaHome}/bin:/opt/maven/bin:${process.env.PATH ?? ""}`,
+      PYTHONPATH: [path.join(root, "src"), process.env.PYTHONPATH].filter(Boolean).join(":"),
+    },
   }).catch((error: NodeJS.ErrnoException & { stdout?: string; stderr?: string }) => {
     return {
       stdout: error.stdout ?? "",
