@@ -19,8 +19,8 @@ export interface UsageEvent {
 }
 
 const PAD_BEFORE_MS = 60 * 60_000;
-/** Event timestamps are request times inside the run, so a short pad covers clock skew without catching a later turn on the same agent. */
-const PAD_AFTER_MS = 3 * 60_000;
+/** Event timestamps are request times inside the run. The pad covers clock skew only, so a retry that starts a minute later is not counted. */
+const PAD_AFTER_MS = 30_000;
 
 export async function fetchUsageEvents(adminKey: string, agentId: string, startedAt: string, endedAt: string): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
