@@ -1,116 +1,141 @@
-# Migration harness
+# Java 8 to 17 for Mastercard's reference apps, with Cursor cloud agents
 
-H1: the agent edits and tests. H2: a script bumps `pom.xml`, and the agent repairs from the compiler errors.
+<p align="center">
+  <img src="results/figures/ladder.png" alt="Practice-set ladder: H1 to H2 to retry to Maven errors in the prompt, passes out of 12 against dollars."/>
+</p>
 
-Train, Composer 2.5, chose H2: 7/12 for $1.35 against 8/12 for $1.23. The kept path, one retry then the error pre-pass, reached 11/12 for $2.62. Mastercard apps were not used to choose the setup.
+<p align="center"><em>The setup is chosen on 12 small open-source Spring Boot apps, then run unchanged on Mastercard's apps with a cheap model and an expensive one.</em></p>
 
-On the Mastercard apps in this vaiyr rerun, Composer H2 greened rp and idassist. Issuing missed r5 on `mockito-core` and `awaitility`, and one retry of that agent went r1–r5 green for about $0.08.
+Mastercard's client-library policy says Java 17 and above. Of its 56 public Java repos, 26 still build on Java 7 or 8. This harness forks such an app, hands it to a Cursor cloud agent with a pinned set of instructions and tools, and grades the branch the agent pushes with MigrationBench's five checks on a machine the agent never touches. Every run writes one row: repo, setup, model, the five checks, tool calls, minutes, and the cents the usage ledger charged.
 
-Opus and Grok do not replace that. This rerun Opus greened rp and idassist and missed issuing r5. Grok 4.7 H2 was red on all three.
+## What we found
 
-## Reproduce a run
+RESULTS_PLACEHOLDER
 
-Use your own Cursor key, your own GitHub user, and the SDK. Forks are private repos on that user (`POST /user/repos`). Set `HARNESS_FORK_OWNER` to your login. JDKs come from `.cursor/bootstrap-jdks.sh` on a plain machine. This harness does not attach a saved image and does not set `cloud.env`.
+## How a run works
 
-The grader is `python -m migration_bench.run_eval` on the machine that launches the harness, not inside the agent VM. It does not use Docker. Install Temurin 8, Temurin 17, and Maven 3.9.6 first with the bootstrap script so `JAVA_HOME=/opt/java/temurin-17` and `/opt/maven/bin/mvn` exist. The same homes are what an agent installs when they are missing. `HARNESS_ERROR_PREPASS=1` runs Maven once on the H2 tree and puts those compiler and test errors in the first prompt.
+```
+repos/<set>.csv ──► fork at base commit ──► + harness files ──► push harness-<setup>
+                                                                      │
+                 ┌──────────────── Cursor cloud agent (one VM per app) ◄──┘
+                 │  installs Temurin 8/17 + Maven, migrates, pushes migrate/<run>
+                 ▼
+         git diff base..branch (harness files excluded)
+                 │
+                 ▼
+     grader/grade.py on this machine (MigrationBench, Java 17)  ──► r1 … r5
+                 │
+                 ▼
+     usage ledger (admin API, by cloudAgentId) ──► cents  ──► out/<run>/summary.csv
+```
 
-`getUsage()` zeros are not the cost. The report's `chargedCents` comes from `POST /teams/filtered-usage-events` with `CURSOR_ADMIN_API_KEY` as Basic auth (key as the username, empty password), matched by `cloudAgentId`.
+The five checks are MigrationBench's maximal-migration rule. r1: `mvn clean verify` passes on Java 17. r2: every compiled class is major version 61. r3: the set of test methods is unchanged. r4: at least as many tests run as in the dataset's count. r5: every tracked dependency is at its latest major. A run passes when all five hold.
+
+Two setups, and two levers on top of the better one:
+
+| | What the agent gets | Where the versions come from |
+| --- | --- | --- |
+| `h1` | The repo, `AGENTS.md`, a migration skill, and a `lookup_dependency` MCP tool | The agent asks the tool for each coordinate |
+| `h2` | The same, but `tools/bump_poms.py` has already raised every pinned version in `pom.xml`; no tool | The script, before the agent starts |
+| `--retry` | After grading fails, the same agent gets the failed checks and one more turn | |
+| `--maven-errors` | Maven is run locally on the bumped tree and its errors go in the first prompt | |
+
+The version table is MigrationBench's own `dependency_version.json`, standing in for the approved-versions list a platform team would publish. Both setups see the same table.
+
+## Repo layout
+
+```
+src/            The harness. main.ts runs repos through fork, agent, grader, ledger.
+grader/         grade.py: MigrationBench's checks, one criterion at a time, as JSON.
+harness/        Files copied into every fork: AGENTS.md, .cursor/ (bootstrap, hooks, skill, MCP), tools/.
+repos/          practice.csv, mastercard.csv, demo.csv, holdout.csv, and versions.json.
+results/        summary.csv per run from the runs reported above, and the figures.
+scripts/        summarize.py prints the tables; figures.py draws them.
+test/           Unit tests for the TypeScript and the Python copied into forks.
+```
+
+Inside a fork the agent sees `.cursor/bootstrap-jdks.sh` (installs the JDKs), `.cursor/hooks/guard.py` (blocks skipped or deleted tests and version downgrades), `.cursor/skills/java17-migration/SKILL.md`, `.cursor/mcp.json` (h1 only), and `tools/`. The grader excludes all of them from the diff.
+
+## Set up
+
+You need Node 22+, Python 3.10+, git, a Cursor account with cloud agents enabled, and a GitHub user that can create private repos.
 
 ```bash
 npm install
-bash .cursor/bootstrap-jdks.sh
-export CURSOR_API_KEY=...            # your Cursor key, used to create agents
-export CURSOR_ADMIN_API_KEY=...      # ledger only
-export HARNESS_GITHUB_TOKEN=...      # your GitHub user
-export HARNESS_FORK_OWNER=your-user
-export HARNESS_REPOS=./repos.csv     # columns github_url and base_commit
-export HARNESS_VERSIONS=./versions.json
-export HARNESS_MIGRATIONBENCH=/path/to/MigrationBench
-export HARNESS_ALLOW_MANY=1
-export HARNESS_ERROR_PREPASS=1
-npm run harness -- --setup h2 --model composer-2.5 --concurrency 5 --target 17
+
+# Grader toolchain: Temurin 17 and Maven 3.9.6, anywhere you like.
+# macOS arm64 example; Linux uses the matching tarballs or .cursor/bootstrap-jdks.sh.
+mkdir -p ~/opt/java && cd ~/opt
+curl -fsSLo jdk17.tgz "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.13%2B11/OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.13_11.tar.gz"
+curl -fsSLo maven.tgz "https://archive.apache.org/dist/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz"
+mkdir jdk && tar -xzf jdk17.tgz -C jdk --strip-components=1 && mv jdk/Contents/Home java/temurin-17 && rm -rf jdk
+tar -xzf maven.tgz && ln -sfn apache-maven-3.9.6 maven
+
+# MigrationBench, the grader.
+git clone https://github.com/amazon-science/MigrationBench.git ~/MigrationBench
+python3 -m venv ~/MigrationBench/.venv && ~/MigrationBench/.venv/bin/pip install -e ~/MigrationBench
 ```
 
-`--model` must be a catalog id from `Cursor.models.list()`. The pin uses `fast=false` when that parameter exists. `--concurrency` stays at 5 or below. `--budget` defaults to 80 tool calls. `--retry` sends the failed check list back to the same agent once.
+Copy `.env.example` to `.env` and fill it in. `CURSOR_API_KEY` drives the agents. `CURSOR_ADMIN_API_KEY` is only read for the usage ledger, which is where cost comes from. Install the Cursor GitHub app on the account named in `FORK_OWNER`.
 
-`--setup h1` lets the agent migrate, with a dependency lookup server. `--setup h2` runs `tools/deps-prepass.py` before the agent and does not attach that server. Do not add mockito or awaitility pins on top of your version file to chase the issuing miss.
+Run the tests:
 
-Node.js 22.13 or newer. Reports go to `HARNESS_OUT` (default `./out`). Do not commit them.
+```bash
+npm test
+```
 
-| Variable | Purpose |
-| --- | --- |
-| `HARNESS_FORK_OWNER` | Your GitHub user. Required. A user is created with `POST /user/repos` |
-| `HARNESS_REPOS` | CSV with `github_url` and `base_commit` |
-| `HARNESS_ALLOW_MANY` | Set to `1` to run every selected row |
-| `HARNESS_VERSIONS` | JSON object of `group:artifact` to version |
-| `HARNESS_MIGRATIONBENCH` | Path to a MigrationBench clone |
-| `HARNESS_PYTHON` | Python used for `python -m migration_bench.run_eval` |
-| `CURSOR_API_KEY` | Creates the cloud agents |
-| `CURSOR_ADMIN_API_KEY` | Ledger Basic auth only |
+## Reproduce the runs
 
-## Live extension
+Each command writes `out/<name>/summary.csv` plus a folder per repo with `report.json`, `run.ndjson` (every agent event), `source.diff` (what was graded), and `grader.log`. Nothing under `out/` is committed; copy the summary into `results/` when a run is one you want to keep.
 
-A live demo uses `--concurrency 1`. The same commands cover one repo or many, `--setup h1` or `--setup h2`, any catalog model id, and a run with or without `--retry`. Secrets stay placeholders. Do not add mockito or awaitility pins.
+```bash
+# 1. One app, to prove the plumbing. GRADE_OFFICIAL=1 also runs stock run_eval and records agreement.
+GRADE_OFFICIAL=1 npm run harness -- --setup h2 --repos repos/practice.csv --only demo-security-spring2 --name proof
 
-Save this as `issuing.csv`. The base commit is the cohort pin for `Mastercard/issuing-api-reference-app`.
+# 2. Practice set, both setups.
+npm run harness -- --setup h1 --repos repos/practice.csv --concurrency 4 --name practice-h1
+npm run harness -- --setup h2 --repos repos/practice.csv --concurrency 4 --name practice-h2
+
+# 3. Levers on the better setup.
+npm run harness -- --setup h2 --repos repos/practice.csv --concurrency 4 --retry --name practice-h2-retry
+npm run harness -- --setup h2 --repos repos/practice.csv --concurrency 4 --retry --maven-errors --name practice-h2-retry-errors
+
+# 4. Mastercard apps, same shape, cheap model then expensive model.
+npm run harness -- --setup h2 --repos repos/mastercard.csv --concurrency 3 --retry --maven-errors --name mastercard-composer
+npm run harness -- --setup h2 --repos repos/mastercard.csv --concurrency 3 --retry --maven-errors --model grok-4.7 --name mastercard-grok
+
+# Tables from any set of summaries.
+python3 scripts/summarize.py out/*/summary.csv
+```
+
+If the ledger had not settled when a run finished, `npm run costs -- out/<name>` re-reads it and rewrites the cost columns.
+
+## Run it on another repo
+
+Add a row to a CSV, or make a new one. The base commit pins what gets migrated.
 
 ```csv
-github_url,base_commit
-https://github.com/Mastercard/issuing-api-reference-app,3a39022355340848fd04d275964388d8739ea89b
-```
-
-One repo does not need `HARNESS_ALLOW_MANY`. H2 is the kept path, so leave the error pre-pass on.
-
-```bash
-export CURSOR_API_KEY=...
-export CURSOR_ADMIN_API_KEY=...
-export HARNESS_GITHUB_TOKEN=...
-export HARNESS_FORK_OWNER=your-user
-export HARNESS_REPOS=./issuing.csv
-export HARNESS_VERSIONS=./versions.json
-export HARNESS_MIGRATIONBENCH=/path/to/MigrationBench
-export HARNESS_ERROR_PREPASS=1
-npm run harness -- --setup h2 --model composer-2.5 --concurrency 1 --target 17
-```
-
-The r5 follow-up is that same command with `--retry`. The harness grades first and, on a maximal miss, sends the failed checks back to that agent once.
-
-```bash
-npm run harness -- --setup h2 --model composer-2.5 --concurrency 1 --target 17 --retry
-```
-
-H1 is the same demo with the agent editing and testing, and no pom pre-pass:
-
-```bash
-npm run harness -- --setup h1 --model composer-2.5 --concurrency 1 --target 17
-```
-
-Swap the catalog id. Each of these is `fast=false` when the model has that parameter:
-
-```bash
-npm run harness -- --setup h2 --model composer-2.5 --concurrency 1 --target 17
-npm run harness -- --setup h2 --model grok-4.7 --concurrency 1 --target 17
-npm run harness -- --setup h2 --model claude-opus-5-5 --concurrency 1 --target 17
-```
-
-Any other id from `Cursor.models.list()` is the same `--model` flag.
-
-Another repo is another `github_url` and `base_commit`. Point `HARNESS_REPOS` at that file:
-
-```csv
-github_url,base_commit
-https://github.com/OWNER/REPO,BASE_COMMIT
+repo,github_url,base_commit
+my-service,https://github.com/org/my-service,<40-char sha>
 ```
 
 ```bash
-export HARNESS_REPOS=./other.csv
-npm run harness -- --setup h2 --model composer-2.5 --concurrency 1 --target 17
+npm run harness -- --setup h2 --repos my.csv --retry --maven-errors --name my-service
 ```
 
-Many repos are more rows in one CSV. Set `HARNESS_ALLOW_MANY=1`. Keep `--concurrency 1` so a live demo still runs one agent at a time. `HARNESS_REPO_MATCH` selects a single row from that file when you want one of them.
+`--model` takes any id from `Cursor.models.list()`; the harness turns fast mode off when the model has that switch. `--target 21` changes the compiler target and the class-major check. `--budget` caps tool calls per agent (default 200) and `--concurrency` caps agents in flight (max 5).
 
-```bash
-export HARNESS_REPOS=./repos.csv
-export HARNESS_ALLOW_MANY=1
-npm run harness -- --setup h2 --model composer-2.5 --concurrency 1 --target 17
-```
+## Where the numbers come from
+
+- **Pass or fail** is `grader/grade.py`, which calls MigrationBench's own functions on the diff between the base commit and the agent's branch. It runs on this machine's Java 17, never in the agent VM. `GRADE_OFFICIAL=1` runs the stock `run_eval` as well and records whether the two agree.
+- **Cents** are the sum of `chargedCents` over the team usage ledger's events for the agent's `cloudAgentId`. `total_cents` is the undiscounted token price. `agent.getUsage()` is not used: it reports zero for plan-included usage.
+- **Calls** are distinct tool calls seen on the run stream. **Minutes** are the run's wall clock, including the JDK install at the start.
+- **Branches.** The prompt names the branch (`migrate/<run>`) and tells the agent to create it first and push it last. Cloud agents do not commit or push on the agent's behalf, so when the branch is missing after a run the harness sends one more message asking for the commit and push; `nudged` in the summary marks those runs.
+- **Retry cents** are the ledger events from the retry's start time onward.
+
+## Limits
+
+- The agent VM starts without Java. The Environments API is blocked under this account's privacy setting, so every agent spends its first minute installing Temurin 8, Temurin 17, and Maven 3.9.6 from `.cursor/bootstrap-jdks.sh`. A team environment built from that script would remove the minute.
+- Twelve practice apps separate a cheap setup from an expensive one and show what each lever adds. They do not separate 7/12 from 8/12.
+- The Mastercard apps are three. They show whether the shape carries over, not a rate.
+- Hooks run on tool calls after the agent's first read-only turns; a downgrade typed in the very first edit is caught by the grader, not the hook.

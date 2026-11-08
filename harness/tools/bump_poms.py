@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Rewrite pom.xml files to pinned versions when the pin is newer. Idempotent."""
+"""Raise every pom.xml version to the pinned version when the pin is newer.
+
+Reads tools/deps-lookup/versions.json and .cursor/harness-target. Leaves
+property references like ${foo.version} alone. Safe to run twice."""
 
 from __future__ import annotations
 

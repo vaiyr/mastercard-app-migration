@@ -1,32 +1,18 @@
-import { Cursor, type ModelSelection, type SDKModel } from "@cursor/sdk";
+import { Cursor, type ModelSelection } from "@cursor/sdk";
 import type { PinnedModel } from "./types.js";
 
-function prefersFastFalse(model: SDKModel): PinnedModel {
-  const fast = model.parameters?.find((parameter) => parameter.id === "fast");
-  const off = fast?.values.find((value) => value.value === "false");
-  if (fast && off) {
-    return { id: model.id, params: [{ id: fast.id, value: off.value }] };
-  }
-  return { id: model.id };
-}
-
-export function selectionFrom(model: PinnedModel): ModelSelection {
-  return { id: model.id, params: model.params };
-}
-
-export async function pinModel(requested?: string): Promise<PinnedModel> {
+/** Resolve a catalog id and turn fast mode off when the model has that switch. */
+export async function pinModel(requested: string): Promise<PinnedModel> {
   const models = await Cursor.models.list();
-  if (models.length === 0) {
-    throw new Error("Cursor.models.list() returned no models");
-  }
-  const wanted = requested || "composer-2.5";
-  const match = models.find((model) => model.id === wanted || model.aliases?.includes(wanted));
+  const match = models.find((model) => model.id === requested);
   if (!match) {
-    const ids = models.map((model) => model.id).join(", ");
-    throw new Error(`Model ${wanted} is not in Cursor.models.list(). Catalog: ${ids}`);
+    throw new Error(`${requested} is not a catalog id. Catalog: ${models.map((model) => model.id).join(", ")}`);
   }
-  if (match.id !== wanted && !requested) {
-    throw new Error(`Refusing alias ${wanted}; catalog id is ${match.id}`);
-  }
-  return prefersFastFalse(match);
+  const fast = match.parameters?.find((parameter) => parameter.id === "fast");
+  const off = fast?.values.find((entry) => entry.value === "false");
+  return fast && off ? { id: match.id, params: [{ id: fast.id, value: off.value }] } : { id: match.id };
+}
+
+export function selection(model: PinnedModel): ModelSelection {
+  return { id: model.id, params: model.params };
 }

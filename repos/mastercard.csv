@@ -1,0 +1,4 @@
+repo,github_url,base_commit,loc,tests,spring_boot
+mastercard-idservice-rp-reference-app,https://github.com/Mastercard/mastercard-idservice-rp-reference-app,228d5cc93c40b573699ad45011908c7d63d165dd,2373,39,2.2.6.RELEASE
+mastercard-idassist-reference-app,https://github.com/Mastercard/mastercard-idassist-reference-app,6d117087e96a40d2bf6f20e5eda7fee4672bf85a,4791,110,2.2.6.RELEASE
+issuing-api-reference-app,https://github.com/Mastercard/issuing-api-reference-app,3a39022355340848fd04d275964388d8739ea89b,4003,18,

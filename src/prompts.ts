@@ -1,62 +1,60 @@
-import { readFileSync } from "node:fs";
-import type { Setup } from "./types.js";
+import type { Setup, Verdict } from "./types.js";
 
-const BOOTSTRAP_SCRIPT = readFileSync(
-  new URL("../harness/cursor/bootstrap-jdks.sh", import.meta.url),
-  "utf8",
-);
-
-export function promptFor(
-  setup: Setup,
-  target: string,
-  budget: number,
-  mavenErrors?: string,
-): string {
-  if (setup === "env") {
-    return [
-      "Environment check only. Do not edit, create, or delete any repository file. Do not commit.",
-      "If /opt/java/temurin-8 or /opt/java/temurin-17 is missing, install Temurin 8 (1.8.0_432), Temurin 17 (17.0.13), and Maven 3.9.6.",
-      "Save the script below as /tmp/bootstrap-jdks.sh (outside the repository) and run it with bash.",
-      "This is a runtime install because the environment image was not selected.",
-      "Script:",
-      BOOTSTRAP_SCRIPT.trimEnd(),
-      "Then run these commands and include their full output in your reply:",
-      "1. JAVA_HOME=/opt/java/temurin-8 mvn -v",
-      "2. JAVA_HOME=/opt/java/temurin-17 mvn -v",
-      "Use /opt/maven/bin/mvn when mvn is not on PATH. Then stop.",
-    ].join("\n");
-  }
-  const lookup =
+export function firstPrompt(setup: Setup, target: string, budget: number, branch: string, mavenErrors?: string): string {
+  const lines = [
+    `Migrate this Maven project to Java ${target}. Read AGENTS.md first.`,
+    `First command: git checkout -b ${branch}`,
+    "The VM has no Java yet: run `bash .cursor/bootstrap-jdks.sh` before any Maven command.",
     setup === "h1"
-      ? "Use the deps-lookup tool before choosing a library version."
-      : "tools/deps-prepass.py already rewrote pom.xml before this turn. Repair that result. Do not expect a lookup server.";
+      ? "Use the lookup_dependency tool before choosing any library version, and follow the java17-migration skill."
+      : "tools/bump_poms.py already raised the versions in pom.xml. Repair the build that results. There is no lookup tool.",
+    "Do not delete, skip, or rename tests. Do not lower a dependency version.",
+    `The check is: JAVA_HOME=/opt/java/temurin-17 mvn -B clean verify`,
+    target === "21" ? "If Java 21 is not installed, say so and stop." : "",
+    `Stop after ${budget} tool calls or when verify is green.`,
+    `Last step, always, even if verify still fails: git add -A && git commit -m "Migrate to Java ${target}" && git push origin ${branch}. Only what is pushed to ${branch} reaches the grader.`,
+    "An external grader decides the result. Do not claim the migration passed; end with the compiler and test errors that remain.",
+  ];
+  if (mavenErrors) {
+    lines.push(
+      "Maven was run once on this tree before your first turn. These are its compiler and test errors. Fix them; a file that is not listed still has to compile.",
+      "Errors:",
+      mavenErrors,
+    );
+  }
+  return lines.filter(Boolean).join("\n");
+}
+
+/** What the grader found, in words the agent can act on. */
+export function failureList(verdict: Verdict): string {
+  const lines: string[] = [];
+  if (!verdict.r1) lines.push("r1 FAIL: `mvn clean verify` does not pass on Java 17.");
+  if (verdict.r1 && !verdict.r2) {
+    lines.push(`r2 FAIL: compiled classes have major versions ${verdict.classMajors.join(", ")}; every class must be 61 (Java 17).`);
+  }
+  if (!verdict.r3) lines.push("r3 FAIL: the set of test methods changed. Restore every original test method.");
+  if (!verdict.r4) {
+    lines.push(`r4 FAIL: ${verdict.tests ?? "no"} tests ran; at least ${verdict.testsRequired} must run.`);
+  }
+  if (verdict.r1 && !verdict.r5) {
+    lines.push("r5 FAIL: these dependencies are below their required major version:");
+    for (const miss of verdict.dependencyMisses) {
+      lines.push(`  ${miss.dependency}: have ${miss.got ?? "?"}, need major ${miss.expected ?? "?"} or newer`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function retryPrompt(verdict: Verdict, branch: string): string {
   return [
-    `Migrate this Maven project to Java ${target}.`,
-    "Follow AGENTS.md and the java17-migration skill.",
-    "If /opt/java/temurin-8, /opt/java/temurin-17, or /opt/maven/bin/mvn is missing, run bash .cursor/bootstrap-jdks.sh before migrating. That installs Temurin 8 (1.8.0_432), Temurin 17 (17.0.13), and Maven 3.9.6.",
-    lookup,
-    "Do not delete, skip, or rename tests. Do not downgrade a dependency.",
-    `The check is: JAVA_HOME=/opt/java/temurin-${target === "21" ? "17" : target} mvn -B clean verify`,
-    target === "21"
-      ? "The image's newest JDK may be 17. If Java 21 is not installed, say so and stop after recording that."
-      : "Use the Temurin 17 home above for the verify command.",
-    `Stop after ${budget} tool calls or when verify succeeds.`,
-    "Do not claim the migration passed. List remaining compiler and test errors.",
-    ...(mavenErrors
-      ? [
-          "Maven was run once on this tree before your first turn. Fix the compiler and test errors below. Do not treat a missing error as permission to skip the file.",
-          "Errors:",
-          mavenErrors,
-        ]
-      : []),
+    `The external grader failed this migration. Stay on branch ${branch} and fix only what is listed below.`,
+    "Do not delete, skip, or rename tests. Do not lower a dependency version.",
+    `Then run JAVA_HOME=/opt/java/temurin-17 mvn -B clean verify and, whatever the result: git add -A && git commit -m "Fix grader failures" && git push origin ${branch}`,
+    "",
+    failureList(verdict),
   ].join("\n");
 }
 
-export function retryPrompt(failureList: string): string {
-  return [
-    "The external grader failed this migration. Keep the current branch and fix only the listed failures.",
-    "Do not delete, skip, or rename tests. Do not downgrade a dependency.",
-    "Failures:",
-    failureList,
-  ].join("\n");
+export function pushNudge(branch: string, target: string): string {
+  return `Nothing has reached the remote branch ${branch}. Run exactly: git add -A; git commit -m "Migrate to Java ${target}"; git push origin HEAD:${branch}. Then stop. Do not change any file.`;
 }

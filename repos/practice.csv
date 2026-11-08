@@ -1,0 +1,13 @@
+repo,github_url,base_commit,loc,tests,spring_boot
+demo-security-spring2,https://github.com/rubytomato/demo-security-spring2,74e3759705d47de6fdd48c96025099e366f1326b,1534,22,2.0.6.RELEASE
+java-getting-started,https://github.com/open-dingtalk/java-getting-started,6d203f7ed6ed27b3cf35b2e4a590596c19ee5ea9,1648,48,2.7.4
+queue-ticket-api,https://github.com/johanaschan/queue-ticket-api,68db1cbb72efeef73c8a93b2c047becc6d9932f6,1680,27,2.0.0.RELEASE
+spring-react-boilerplate,https://github.com/pram/spring-react-boilerplate,863f475dd8c176373fc10f69372435ae487bfeb2,1731,23,2.0.4.RELEASE
+ecommerce-store,https://github.com/prasadus92/ecommerce-store,cb05d8aa58eba5c68bbbcda254accf1e3513d616,1751,21,2.2.4.RELEASE
+poc-spring-with-webapp-gestionmateriel,https://github.com/fouomene/poc-spring-with-webapp-gestionmateriel,71cd7281457eb4b938e56f3fb169854d1d5e9fb7,2429,39,2.6.4
+poc-bank-api-java,https://github.com/GuillaumeFalourd/poc-bank-api-java,5fb58fa50b7f2d1c2f36d2e46a93dc030af542bf,2925,48,2.0.5.RELEASE
+Jumpcloud-Slackbot,https://github.com/fundingasiagroup/Jumpcloud-Slackbot,de2cb2525115842ff0d685d0af65360df9cb1f8d,3033,51,2.2.7.RELEASE
+pickle-wiki-backend-springboot,https://github.com/SamirSales/pickle-wiki-backend-springboot,b8d61f15f250a3a65ed742b5f2140320d51bd89e,3420,29,2.1.8.RELEASE
+Chatty,https://github.com/IgorNB/Chatty,0fe8ddcbad688c196a8f183a616465eb91e23d44,3693,50,2.0.8.RELEASE
+Design-Pattern,https://github.com/lkydog/Design-Pattern,1876af19957001347d9f3fd193eae7e6911d3ac0,3866,29,2.7.2
+rest-example,https://github.com/mukhtiarahmed/rest-example,eed994d825bb547bbc97b80113c0d3135d49d1d7,4255,24,2.0.6.RELEASE

@@ -1,39 +1,32 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { readFileSync } from "node:fs";
-import { promptFor } from "../src/prompts.js";
+import { test } from "node:test";
+import { failureList, firstPrompt, retryPrompt } from "../src/prompts.js";
+import type { Verdict } from "../src/types.js";
 
-test("env prompt installs the pinned JDKs when the image is missing", () => {
-  const prompt = promptFor("env", "17", 80);
-  const script = readFileSync(
-    new URL("../harness/cursor/bootstrap-jdks.sh", import.meta.url),
-    "utf8",
-  );
-  assert.match(prompt, /1\.8\.0_432/);
-  assert.match(prompt, /17\.0\.13/);
-  assert.match(prompt, /3\.9\.6/);
-  assert.match(prompt, /JAVA_HOME=\/opt\/java\/temurin-8 mvn -v/);
-  assert.match(prompt, /JAVA_HOME=\/opt\/java\/temurin-17 mvn -v/);
-  assert.match(prompt, /Do not commit/);
-  assert.ok(prompt.includes(script.trimEnd()));
+const r5Miss: Verdict = {
+  r1: true, r2: true, r3: true, r4: true, r5: false, minimal: true, maximal: false,
+  classMajors: [61], tests: 18, testsRequired: 18, trackedDependencies: 12,
+  dependencyMisses: [{ dependency: "org.mockito:mockito-core", expected: "5.13.0", got: "4.5.1" }],
+  diffApplied: true,
+};
+
+test("h1 prompt names the lookup tool, h2 names the pom bump", () => {
+  assert.match(firstPrompt("h1", "17", 80, "migrate/x"), /lookup_dependency/);
+  assert.match(firstPrompt("h2", "17", 80, "migrate/x"), /bump_poms\.py/);
+  assert.match(firstPrompt("h2", "17", 80, "migrate/x"), /bootstrap-jdks\.sh/);
 });
 
-test("migration prompt runs the bootstrap script before verify", () => {
-  const prompt = promptFor("h1", "17", 80);
-  assert.match(prompt, /bash \.cursor\/bootstrap-jdks\.sh/);
-  assert.match(prompt, /1\.8\.0_432/);
-  assert.match(prompt, /temurin-17/);
+test("maven errors are appended once", () => {
+  const prompt = firstPrompt("h2", "17", 80, "migrate/x", "[ERROR] Foo.java:[3,8] cannot find symbol");
+  assert.match(prompt, /cannot find symbol/);
+  assert.equal(prompt.split("Errors:").length, 2);
 });
 
-test("h2 prompt starts from the pre-pass rewrite", () => {
-  const prompt = promptFor("h2", "17", 80);
-  assert.match(prompt, /deps-prepass\.py already rewrote pom\.xml/);
-  assert.doesNotMatch(prompt, /deps-lookup tool/);
-  assert.doesNotMatch(prompt, /Maven was run once/);
-});
-
-test("h2 prompt includes one up-front Maven error list", () => {
-  const prompt = promptFor("h2", "17", 80, "[ERROR] cannot find symbol");
-  assert.match(prompt, /\[ERROR\] cannot find symbol/);
-  assert.match(prompt, /Fix the compiler and test errors/);
+test("the retry lists only the failed checks", () => {
+  const list = failureList(r5Miss);
+  assert.match(list, /r5 FAIL/);
+  assert.match(list, /mockito-core: have 4\.5\.1, need major 5\.13\.0/);
+  assert.doesNotMatch(list, /r1 FAIL|r3 FAIL/);
+  assert.match(retryPrompt(r5Miss, "migrate/x"), /Stay on branch migrate\/x/);
+  assert.match(firstPrompt("h2", "17", 80, "migrate/x"), /git push origin migrate\/x/);
 });

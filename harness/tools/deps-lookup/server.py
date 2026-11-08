@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Stdio MCP server: pinned Maven coordinates from versions.json."""
+"""MCP server over stdio with one tool, lookup_dependency.
+
+Answers with the pinned version for a Maven groupId:artifactId from
+versions.json next to this file, or "unknown". Messages are newline-delimited
+JSON-RPC, which is what MCP stdio clients send and expect.
+"""
 
 from __future__ import annotations
 
@@ -9,139 +14,89 @@ from pathlib import Path
 from typing import Any
 
 PROTOCOL = "2024-11-05"
-ROOT = Path(__file__).resolve().parent
-VERSIONS_PATH = ROOT / "versions.json"
+VERSIONS_PATH = Path(__file__).resolve().parent / "versions.json"
 
 
 def load_versions() -> dict[str, str]:
     if not VERSIONS_PATH.is_file():
         return {}
     data = json.loads(VERSIONS_PATH.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        return {}
-    return {str(key): str(value) for key, value in data.items()}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
 
 
 VERSIONS = load_versions()
 
+TOOL = {
+    "name": "lookup_dependency",
+    "description": "Return the pinned current major version for a Maven groupId and artifactId.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "groupId": {"type": "string"},
+            "artifactId": {"type": "string"},
+            "coordinate": {"type": "string", "description": "groupId:artifactId, used when the two ids are omitted."},
+        },
+    },
+}
 
-def lookup(group_id: str, artifact_id: str) -> str:
-    coordinate = f"{group_id}:{artifact_id}"
-    return VERSIONS.get(coordinate, "unknown")
 
-
-def _tool_result(text: str) -> dict[str, Any]:
-    return {
-        "content": [{"type": "text", "text": text}],
-        "isError": False,
-    }
+def lookup(arguments: dict[str, Any]) -> str:
+    group = str(arguments.get("groupId") or "")
+    artifact = str(arguments.get("artifactId") or "")
+    coordinate = str(arguments.get("coordinate") or "")
+    if coordinate and ":" in coordinate and not (group and artifact):
+        group, artifact = coordinate.split(":", 1)
+    if not group or not artifact:
+        raise ValueError("groupId and artifactId are required")
+    return VERSIONS.get(f"{group}:{artifact}", "unknown")
 
 
 def handle(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the response for a request, or None for a notification."""
     if "id" not in message:
         return None
+    request_id = message["id"]
     method = message.get("method")
-    request_id = message.get("id")
     params = message.get("params") or {}
-    if method == "initialize":
-        result = {
-            "protocolVersion": PROTOCOL,
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "deps-lookup", "version": "1.0.0"},
-        }
-    elif method == "ping":
-        result = {}
-    elif method == "tools/list":
-        result = {
-            "tools": [
-                {
-                    "name": "lookup_dependency",
-                    "description": "Return the pinned current major version for a Maven groupId and artifactId.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "groupId": {"type": "string"},
-                            "artifactId": {"type": "string"},
-                            "coordinate": {
-                                "type": "string",
-                                "description": "groupId:artifactId. Used when groupId and artifactId are omitted.",
-                            },
-                        },
-                    },
-                }
-            ]
-        }
-    elif method == "tools/call":
-        name = params.get("name")
-        arguments = params.get("arguments") or {}
-        if name != "lookup_dependency":
-            return _error(request_id, -32602, f"Unknown tool: {name}")
-        coordinate = str(arguments.get("coordinate") or "")
-        group_id = str(arguments.get("groupId") or "")
-        artifact_id = str(arguments.get("artifactId") or "")
-        if coordinate and ":" in coordinate and not (group_id and artifact_id):
-            group_id, artifact_id = coordinate.split(":", 1)
-        if not group_id or not artifact_id:
-            return _error(request_id, -32602, "groupId and artifactId are required")
-        result = _tool_result(lookup(group_id, artifact_id))
-    else:
-        return _error(request_id, -32601, f"Method not found: {method}")
+    try:
+        if method == "initialize":
+            result: Any = {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "deps-lookup", "version": "1.1.0"},
+            }
+        elif method == "ping":
+            result = {}
+        elif method == "tools/list":
+            result = {"tools": [TOOL]}
+        elif method == "tools/call":
+            if params.get("name") != "lookup_dependency":
+                return error(request_id, -32602, f"Unknown tool: {params.get('name')}")
+            result = {"content": [{"type": "text", "text": lookup(params.get("arguments") or {})}], "isError": False}
+        else:
+            return error(request_id, -32601, f"Method not found: {method}")
+    except ValueError as exc:
+        return error(request_id, -32602, str(exc))
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "error": {"code": code, "message": message},
-    }
-
-
-def _read_message() -> dict[str, Any] | None:
-    header = b""
-    while True:
-        line = sys.stdin.buffer.readline()
-        if not line:
-            return None
-        if line in (b"\r\n", b"\n"):
-            break
-        header += line
-    if not header:
-        return None
-    if header.lstrip().startswith(b"{"):
-        payload = header
-        extra = sys.stdin.buffer.readline()
-        if extra and extra.strip():
-            payload = header + extra
-        return json.loads(payload.decode("utf-8"))
-    length = 0
-    for raw in header.decode("utf-8", errors="replace").splitlines():
-        if raw.lower().startswith("content-length:"):
-            length = int(raw.split(":", 1)[1].strip())
-    if length <= 0:
-        return None
-    body = sys.stdin.buffer.read(length)
-    return json.loads(body.decode("utf-8"))
-
-
-def _write_message(payload: dict[str, Any]) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode("ascii"))
-    sys.stdout.buffer.write(body)
-    sys.stdout.buffer.flush()
+def error(request_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
 def main() -> None:
-    while True:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
         try:
-            message = _read_message()
+            message = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if message is None:
-            return
-        response = handle(message)
+        response = handle(message) if isinstance(message, dict) else None
         if response is not None:
-            _write_message(response)
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
 
 
 if __name__ == "__main__":

@@ -1,82 +1,63 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
-import { parseCsv } from "./csv.js";
 import type { RepoRef } from "./types.js";
 
-const execFileAsync = promisify(execFile);
-
-export function recordsToRepos(records: Record<string, string>[]): RepoRef[] {
-  return records.map((record) => {
-    const url = record.github_url || record.url;
-    const baseCommit = record.base_commit || record.baseCommit;
-    const slug = (record.repo || url || "").split("/").filter(Boolean).pop() || "repo";
-    if (!url || !baseCommit) {
-      throw new Error("Each repo row needs github_url and base_commit");
+/** Small RFC 4180 reader. Enough for the repo manifests in repos/. */
+export function parseCsv(text: string): Record<string, string>[] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  const source = text.replace(/^﻿/, "");
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (quoted) {
+      if (char === '"' && source[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && source[i + 1] === "\n") i += 1;
+      row.push(field);
+      if (row.some((cell) => cell.length > 0)) rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
     }
-    return {
-      id: record.repo || slug,
-      name: slug,
-      url,
-      baseCommit,
-      split: record.split,
-    };
+  }
+  row.push(field);
+  if (row.some((cell) => cell.length > 0)) rows.push(row);
+  const [header = [], ...body] = rows;
+  return body.map((cells) =>
+    Object.fromEntries(header.map((name, index) => [name.trim(), (cells[index] ?? "").trim()])),
+  );
+}
+
+export function reposFromRecords(records: Record<string, string>[]): RepoRef[] {
+  return records.map((record) => {
+    const url = record.github_url;
+    const baseCommit = record.base_commit;
+    if (!url || !baseCommit) throw new Error("Each row needs github_url and base_commit");
+    const name = (record.repo || url).split("/").filter(Boolean).pop() ?? "repo";
+    return { name, url, baseCommit };
   });
 }
 
-export async function loadRepos(csvPath: string, match?: string): Promise<RepoRef[]> {
-  const text = await readFile(csvPath, "utf8");
-  let repos = recordsToRepos(parseCsv(text));
-  if (match) {
-    const needle = match.toLowerCase();
-    repos = repos.filter((repo) =>
-      [repo.id, repo.name, repo.url, repo.split ?? ""].some((value) =>
-        value.toLowerCase().includes(needle),
-      ),
-    );
-  }
-  return repos;
-}
-
-export async function resolveHead(url: string): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["ls-remote", url, "HEAD"], {
-    timeout: 60_000,
-  });
-  const sha = stdout.trim().split(/\s+/)[0];
-  if (!/^[0-9a-f]{40}$/i.test(sha ?? "")) {
-    throw new Error(`Could not resolve HEAD for ${url}`);
-  }
-  return sha;
-}
-
-export async function probeRepo(): Promise<RepoRef> {
-  const url = process.env.HARNESS_PROBE_URL || "https://github.com/0xShamil/java-xid";
-  const baseCommit = process.env.HARNESS_PROBE_SHA || (await resolveHead(url));
-  const name = url.split("/").filter(Boolean).pop()?.replace(/\.git$/, "") || "probe";
-  return {
-    id: "env-probe",
-    name,
-    url,
-    baseCommit,
-  };
-}
-
-function deniedFragments(): string[] {
-  return (process.env.HARNESS_NAME_DENY || "")
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-export function forkName(repo: RepoRef, setup: string): string {
-  const raw = setup === "env" ? `${repo.name}-env-probe` : repo.name;
-  let cleaned = raw.toLowerCase();
-  for (const fragment of deniedFragments()) {
-    cleaned = cleaned.split(fragment).join("");
-  }
-  cleaned = cleaned
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return cleaned.slice(0, 80) || "migration-fork";
+export async function loadRepos(csvPath: string, only?: string): Promise<RepoRef[]> {
+  const repos = reposFromRecords(parseCsv(await readFile(csvPath, "utf8")));
+  const needle = only?.toLowerCase();
+  const selected = needle
+    ? repos.filter((repo) => repo.name.toLowerCase().includes(needle) || repo.url.toLowerCase().includes(needle))
+    : repos;
+  if (selected.length === 0) throw new Error(`No rows in ${csvPath} match ${only ?? "(all)"}`);
+  return selected;
 }

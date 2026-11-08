@@ -1,57 +1,67 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ParsedVerdict } from "./verdict.js";
-import type { PinnedModel, RepoRef, Setup } from "./types.js";
-import type { TeamUsage } from "./team-usage.js";
-import type { TokenCount } from "./usage.js";
+import type { Report } from "./types.js";
 
-export interface MigrationReport {
-  repo: string;
-  upstreamUrl: string;
-  baseCommit: string;
-  forkUrl?: string;
-  harnessCommit?: string;
-  agentId?: string;
-  agentUrl?: string;
-  runId?: string;
-  branch?: string;
-  model: PinnedModel;
-  /** UTC start of this run, ISO-8601. `absent` when neither the API nor the local clock recorded it. */
-  startedAt: string;
-  /** UTC end of this run, ISO-8601. `absent` when it was not recorded. */
-  endedAt: string;
-  /** UTC window of a verifier retry, separate from the first attempt. */
-  retryStartedAt?: string;
-  retryEndedAt?: string;
-  setup: Setup;
-  target: string;
-  calls: number;
-  minutes: number;
-  chargedCents: TokenCount;
-  rawCostCents: TokenCount;
-  costSettled: boolean;
-  /** Full `getUsage()` object. The string `absent` when the call returned nothing. */
-  getUsage: unknown;
-  /** Token fields from `getUsage().usage`. Each missing field is the string `absent`. */
-  tokens: Record<string, TokenCount>;
-  /** Sums from the team filtered-usage-events endpoint for this cloud agent. */
-  teamUsage: TeamUsage;
-  verdict: ParsedVerdict;
-  /** First grader result when `--retry` ran a second attempt. */
-  verdictBeforeRetry?: ParsedVerdict;
-  dependencies: { before: string[]; after: string[] };
-  ndjsonPath?: string;
-  evalLogPath?: string;
-  error?: string;
+export const SUMMARY_COLUMNS = [
+  "run", "repo", "setup", "model", "retry", "maven_errors",
+  "r1", "r2", "r3", "r4", "r5", "maximal",
+  "stop_reason", "nudged", "calls", "minutes", "started_at", "ended_at",
+  "charged_cents", "total_cents", "first_charged_cents", "retry_charged_cents",
+  "dependency_misses", "agent_url", "branch", "error",
+] as const;
+
+function cell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const text = typeof value === "boolean" ? (value ? "1" : "0") : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export async function writeReport(outDir: string, report: MigrationReport): Promise<string> {
-  await mkdir(outDir, { recursive: true });
-  const file = path.join(outDir, "migration-report.json");
-  await writeFile(file, `${JSON.stringify(report, null, 2)}\n`);
-  return file;
+/** One line per run, the table the deck is built from. */
+export function summaryRow(report: Report): string {
+  const first = report.attempts.find((attempt) => attempt.kind === "first");
+  const retry = report.attempts.find((attempt) => attempt.kind === "retry");
+  const verdict = report.verdict;
+  const values: Record<(typeof SUMMARY_COLUMNS)[number], unknown> = {
+    run: report.run,
+    repo: report.repo,
+    setup: report.setup,
+    model: report.model.id,
+    retry: report.retry,
+    maven_errors: report.mavenErrors,
+    r1: verdict.r1, r2: verdict.r2, r3: verdict.r3, r4: verdict.r4, r5: verdict.r5,
+    maximal: verdict.maximal,
+    stop_reason: report.attempts.map((attempt) => attempt.stopReason).join("+"),
+    nudged: report.attempts.some((attempt) => attempt.nudged),
+    calls: report.calls,
+    minutes: report.minutes,
+    started_at: report.startedAt,
+    ended_at: report.endedAt,
+    charged_cents: report.cost.chargedCents,
+    total_cents: report.cost.totalCents,
+    first_charged_cents: first?.cost?.chargedCents,
+    retry_charged_cents: retry?.cost?.chargedCents,
+    dependency_misses: verdict.dependencyMisses.map((miss) => `${miss.dependency} ${miss.got ?? "?"}<${miss.expected ?? "?"}`).join("; "),
+    agent_url: report.agentUrl,
+    branch: report.branch,
+    error: report.error,
+  };
+  return SUMMARY_COLUMNS.map((column) => cell(values[column])).join(",");
 }
 
-export function reportRepo(repo: RepoRef): Pick<MigrationReport, "repo" | "upstreamUrl" | "baseCommit"> {
-  return { repo: repo.id, upstreamUrl: repo.url, baseCommit: repo.baseCommit };
+export async function writeReport(dir: string, report: Report): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+}
+
+export async function appendSummary(runDir: string, report: Report): Promise<void> {
+  const file = path.join(runDir, "summary.csv");
+  const exists = await readFile(file, "utf8").catch(() => "");
+  if (!exists) await writeFile(file, `${SUMMARY_COLUMNS.join(",")}\n`);
+  await appendFile(file, `${summaryRow(report)}\n`);
+}
+
+/** Rebuild summary.csv from every report.json under a run directory. */
+export async function rewriteSummary(runDir: string, reports: Report[]): Promise<void> {
+  const lines = [SUMMARY_COLUMNS.join(","), ...reports.map(summaryRow)];
+  await writeFile(path.join(runDir, "summary.csv"), `${lines.join("\n")}\n`);
 }

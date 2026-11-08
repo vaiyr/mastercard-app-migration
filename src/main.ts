@@ -1,344 +1,294 @@
-import { IntegrationNotConnectedError } from "@cursor/sdk";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isUsageLimit, pollChargedCents, runCloudAgent, stopRemainingRepos } from "./agent-run.js";
+import { agentUrl, runAgent } from "./agent.js";
 import { parseArgs } from "./cli.js";
-import { fetchFork, sourceDiff } from "./diff.js";
-import { ensureEvaluatorReady, runEval } from "./evaluate.js";
-import { prepareFork } from "./fork.js";
-import { githubToken, resolveForkOwner } from "./github.js";
-import { captureMavenErrors } from "./maven-errors.js";
+import { loadDotEnv, need } from "./env.js";
+import { fetchBranch, git, prepareFork, remoteBranchSha, sourceDiff } from "./fork.js";
+import { gradeDiff, failedVerdict } from "./grade.js";
+import { emptyCost, eventsFrom, settledEvents, sumEvents } from "./ledger.js";
+import { captureMavenErrors } from "./maven.js";
 import { pinModel } from "./model.js";
-import { forkName, loadRepos, probeRepo } from "./repos.js";
-import { reportRepo, writeReport, type MigrationReport } from "./report.js";
-import type { RepoRef } from "./types.js";
-import { fetchTeamUsage } from "./team-usage.js";
-import type { UsageSnapshot } from "./usage.js";
-import { envProofGap, parseEvalLog, type ParsedVerdict } from "./verdict.js";
+import { firstPrompt, retryPrompt } from "./prompts.js";
+import { appendSummary, writeReport } from "./report.js";
+import { loadRepos } from "./repos.js";
+import type { Attempt, Options, PinnedModel, RepoRef, Report, Verdict } from "./types.js";
 
-function usageFields(
-  usage: UsageSnapshot,
-): Pick<MigrationReport, "chargedCents" | "rawCostCents" | "costSettled" | "getUsage" | "tokens"> {
-  return {
-    chargedCents: usage.chargedCents,
-    rawCostCents: usage.rawCostCents,
-    costSettled: usage.costSettled,
-    getUsage: usage.getUsage,
-    tokens: usage.tokens,
-  };
+function log(repo: string, message: string): void {
+  process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] ${repo}: ${message}\n`);
 }
 
-function unfinishedVerdict(note: string): ParsedVerdict {
-  return {
-    maximal: null,
-    minimal: null,
-    buildSuccess: null,
-    testCount: null,
-    r1: null,
-    r2: null,
-    r3: null,
-    r4: null,
-    r5: null,
-    r1r2Combined: false,
-    dependencyFailures: [],
-    notes: [note],
-  };
+function verdictWord(verdict: Verdict): string {
+  if (verdict.error) return `grader error: ${verdict.error}`;
+  const checks = (["r1", "r2", "r3", "r4", "r5"] as const).map((key) => `${key}=${verdict[key] ? "ok" : "FAIL"}`).join(" ");
+  return `${verdict.maximal ? "PASS" : "fail"} (${checks})`;
 }
 
-function outRoot(): string {
-  return process.env.HARNESS_OUT || path.resolve("out");
-}
-
-function workRoot(): string {
-  return process.env.HARNESS_WORK || path.join(outRoot(), "work");
-}
-
-async function selectRepos(setup: "env" | "h1" | "h2"): Promise<RepoRef[]> {
-  if (setup === "env") return [await probeRepo()];
-  const csvPath = process.env.HARNESS_REPOS;
-  if (!csvPath) throw new Error("Set HARNESS_REPOS to a CSV with github_url and base_commit");
-  const repos = await loadRepos(csvPath, process.env.HARNESS_REPO_MATCH);
-  if (repos.length === 0) throw new Error("No repos matched");
-  if (repos.length > 1 && process.env.HARNESS_ALLOW_MANY !== "1") {
-    throw new Error(
-      `Refusing to start ${repos.length} repos. Set HARNESS_REPO_MATCH to one row, or HARNESS_ALLOW_MANY=1.`,
-    );
-  }
-  return repos;
-}
-
-async function pomVersions(checkout: string, ref: string): Promise<string[]> {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const exec = promisify(execFile);
-  try {
-    const { stdout } = await exec("git", ["grep", "-n", "<version>", ref, "--", "pom.xml", "*/pom.xml"], {
-      cwd: checkout,
-      timeout: 30_000,
-    });
-    return stdout.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 200);
-  } catch {
-    return [];
-  }
-}
-
-async function runOne(
-  repo: RepoRef,
-  options: ReturnType<typeof parseArgs>,
-  model: Awaited<ReturnType<typeof pinModel>>,
-  halt: () => void,
-): Promise<MigrationReport> {
-  const owner = resolveForkOwner();
-  const token = await githubToken();
-  const name = forkName(repo, options.setup);
-  const slug = name;
-  const dir = path.join(outRoot(), slug);
-  await mkdir(dir, { recursive: true });
-  const prepared = await prepareFork({
-    repo,
-    forkName: name,
-    owner,
-    token,
-    setup: options.setup,
-    target: options.target,
-    workRoot: workRoot(),
-  });
-  const ndjsonPath = path.join(dir, "run.ndjson");
-  let mavenErrors: string | undefined;
-  if (options.setup === "h2" && process.env.HARNESS_ERROR_PREPASS === "1") {
-    const captured = await captureMavenErrors(prepared.checkout);
-    await writeFile(path.join(dir, "maven-prepass.log"), captured.full);
-    mavenErrors = captured.errors;
-    await writeFile(path.join(dir, "maven-prepass-errors.txt"), `${captured.errors}\n`);
-  }
-  const started = await runCloudAgent({
-    forkUrl: prepared.forkUrl,
-    setup: options.setup,
-    target: options.target,
-    budget: options.budget,
-    model,
-    repoLabel: slug,
-    ndjsonPath,
-    startingRef: prepared.harnessCommit,
-    mavenErrors,
-  });
-  let capture = started.capture;
-  if (isUsageLimit(capture.error)) {
-    halt();
-    const limitedUsage = await pollChargedCents(started.agent, { waitForCost: false });
-    await started.agent.close();
-    const report: MigrationReport = {
-      ...reportRepo(repo),
-      forkUrl: prepared.forkUrl,
-      harnessCommit: prepared.harnessCommit,
-      agentId: capture.agentId,
-      agentUrl: capture.agentUrl,
-      runId: capture.runId,
-      branch: capture.branch,
-      model,
-      startedAt: capture.startedAt,
-      endedAt: capture.endedAt,
-      setup: options.setup,
-      target: options.target,
-      calls: capture.calls,
-      minutes: Number(capture.minutes.toFixed(3)),
-      ...usageFields(limitedUsage),
-      teamUsage: await fetchTeamUsage(capture.agentId, capture.startedAt, capture.endedAt),
-      verdict: unfinishedVerdict("Stopped before grading because usage_limit_exceeded."),
-      dependencies: { before: [], after: [] },
-      ndjsonPath,
-      error: capture.error,
-    };
-    await writeReport(dir, report);
-    return report;
-  }
-  let usage = await pollChargedCents(started.agent);
-
-  let head = prepared.harnessCommit;
-  if (capture.branch) {
-    await fetchFork(prepared.checkout, prepared.forkUrl, token);
-    head = `fork/${capture.branch}`;
-  }
-  let diffText =
-    options.setup === "env"
-      ? ""
-      : await sourceDiff(prepared.checkout, repo.baseCommit, head).catch(() => "");
-  const diffPath = path.join(dir, "source.diff");
-  await writeFile(diffPath, diffText);
-
-  const notes = await ensureEvaluatorReady();
-  const maximal = await runEval({
-    githubUrl: repo.url,
-    baseCommit: repo.baseCommit,
+async function gradeAttempt(input: {
+  repo: RepoRef;
+  checkout: string;
+  forkUrl: string;
+  branch: string | undefined;
+  target: string;
+  dir: string;
+  suffix: string;
+}): Promise<Verdict> {
+  const token = need("GITHUB_TOKEN");
+  let head = input.branch ? await fetchBranch(input.checkout, input.forkUrl, input.branch, token) : "HEAD";
+  const diff = await sourceDiff(input.checkout, input.repo.baseCommit, head);
+  const diffPath = path.join(input.dir, `source${input.suffix}.diff`);
+  await writeFile(diffPath, diff);
+  if (!input.branch) return failedVerdict("agent pushed no branch");
+  return gradeDiff({
+    githubUrl: input.repo.url,
+    baseCommit: input.repo.baseCommit,
     diffPath,
-    target: options.target,
-    maximal: true,
+    target: input.target,
+    logPath: path.join(input.dir, `grader${input.suffix}.log`),
+    official: process.env.GRADE_OFFICIAL === "1",
   });
-  const minimal =
-    options.setup === "env"
-      ? undefined
-      : await runEval({
-          githubUrl: repo.url,
-          baseCommit: repo.baseCommit,
-          diffPath,
-          target: options.target,
-          maximal: false,
-        });
-  let verdict = parseEvalLog(maximal.log, minimal?.log);
-  verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
-  let verdictBeforeRetry: ParsedVerdict | undefined;
-  let reportRetryWindow: { retryStartedAt: string; retryEndedAt: string } | undefined;
-  const evalLogPath = path.join(dir, "eval.log");
-  await writeFile(evalLogPath, [maximal.log, minimal?.log ?? ""].join("\n----- minimal -----\n"));
+}
 
-  if (options.retry && options.setup !== "env" && verdict.maximal === false && !capture.error) {
-    verdictBeforeRetry = verdict;
-    const failureList = [
-      `r1=${String(verdict.r1)}`,
-      `r2=${String(verdict.r2)}`,
-      `r3=${String(verdict.r3)}`,
-      `r4=${String(verdict.r4)}`,
-      `r5=${String(verdict.r5)}`,
-      `maximal=${String(verdict.maximal)}`,
-      `minimal=${String(verdict.minimal)}`,
-      `buildSuccess=${String(verdict.buildSuccess)}`,
-      ...verdict.dependencyFailures.map((dep) => `dependency ${dep}`),
-      ...verdict.notes,
-    ].join("\n");
-    const retried = await runCloudAgent({
-      forkUrl: prepared.forkUrl,
-      setup: options.setup,
-      target: options.target,
-      budget: options.budget,
-      model,
-      repoLabel: slug,
-      ndjsonPath,
-      retryFailure: failureList,
-      resumeId: started.agent.agentId,
-    });
-    const firstStartedAt = capture.startedAt;
-    const firstEndedAt = capture.endedAt;
-    capture = {
-      ...retried.capture,
-      calls: capture.calls + retried.capture.calls,
-      minutes: capture.minutes + retried.capture.minutes,
-      startedAt: firstStartedAt,
-      endedAt: firstEndedAt,
-    };
-    reportRetryWindow = {
-      retryStartedAt: retried.capture.startedAt,
-      retryEndedAt: retried.capture.endedAt,
-    };
-    if (isUsageLimit(retried.capture.error)) {
-      halt();
-      usage = await pollChargedCents(started.agent, { waitForCost: false });
-    } else if (capture.branch) {
-      await fetchFork(prepared.checkout, prepared.forkUrl, token);
-      head = `fork/${capture.branch}`;
-      diffText = await sourceDiff(prepared.checkout, repo.baseCommit, head).catch(() => "");
-      await writeFile(diffPath, diffText);
-      const retriedMaximal = await runEval({
-        githubUrl: repo.url,
-        baseCommit: repo.baseCommit,
-        diffPath,
-        target: options.target,
-        maximal: true,
-      });
-      const retriedMinimal = await runEval({
-        githubUrl: repo.url,
-        baseCommit: repo.baseCommit,
-        diffPath,
-        target: options.target,
-        maximal: false,
-      });
-      verdict = parseEvalLog(retriedMaximal.log, retriedMinimal.log);
-      verdict = { ...verdict, notes: [...notes, ...verdict.notes] };
-      await writeFile(
-        evalLogPath,
-        [retriedMaximal.log, retriedMinimal.log].join("\n----- minimal -----\n"),
-      );
-      usage = await pollChargedCents(started.agent);
-    } else {
-      usage = await pollChargedCents(started.agent);
-    }
-  }
+async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Promise<Report> {
+  const runDir = path.join(options.out, options.name);
+  const dir = path.join(runDir, repo.name);
+  await mkdir(dir, { recursive: true });
 
-  await started.agent.close();
-  const before = await pomVersions(prepared.checkout, repo.baseCommit);
-  const after = await pomVersions(prepared.checkout, head);
-  const report: MigrationReport = {
-    ...reportRepo(repo),
-    forkUrl: prepared.forkUrl,
-    harnessCommit: prepared.harnessCommit,
-    agentId: capture.agentId,
-    agentUrl: capture.agentUrl,
-    runId: capture.runId,
-    branch: capture.branch,
-    model,
-    startedAt: capture.startedAt,
-    endedAt: capture.endedAt,
-    ...(reportRetryWindow ?? {}),
+  log(repo.name, `preparing fork (${options.setup})`);
+  const fork = await prepareFork({
+    repo,
     setup: options.setup,
     target: options.target,
-    calls: capture.calls,
-    minutes: Number(capture.minutes.toFixed(3)),
-    ...usageFields(usage),
-    teamUsage: await fetchTeamUsage(capture.agentId, capture.startedAt, capture.endedAt),
-    verdict,
-    ...(verdictBeforeRetry ? { verdictBeforeRetry } : {}),
-    dependencies: { before, after },
+    owner: need("FORK_OWNER"),
+    token: need("GITHUB_TOKEN"),
+    workRoot: path.join(options.out, "work", options.name),
+  });
+
+  let mavenErrors: string | undefined;
+  if (options.mavenErrors) {
+    log(repo.name, "running Maven locally on the bumped tree");
+    const captured = await captureMavenErrors(fork.checkout);
+    await writeFile(path.join(dir, "maven-errors.log"), captured.full);
+    await writeFile(path.join(dir, "maven-errors.txt"), `${captured.errors}\n`);
+    mavenErrors = captured.errors;
+  }
+
+  const ndjsonPath = path.join(dir, "run.ndjson");
+  const branchName = `migrate/${options.name}`;
+  const common = {
+    branch: branchName,
+    target: options.target,
+    branchPushed: async () => Boolean(await remoteBranchSha(fork.forkUrl, branchName, need("GITHUB_TOKEN"))),
+    forkUrl: fork.forkUrl,
+    startingRef: fork.harnessBranch,
+    setup: options.setup,
+    model,
+    name: `${options.setup}-${model.id}-${repo.name}`,
+    metadata: { run: options.name, setup: options.setup, model: model.id, repo: repo.name },
+    budget: options.budget,
     ndjsonPath,
-    evalLogPath,
-    error: capture.error ?? usage.error,
+  };
+
+  log(repo.name, `starting ${model.id} agent`);
+  const first = await runAgent({ ...common, prompt: firstPrompt(options.setup, options.target, options.budget, branchName, mavenErrors) }, "first");
+  const attempts: Attempt[] = [first.attempt];
+  let branch = first.attempt.branch;
+  log(repo.name, `agent ${first.attempt.stopReason} in ${first.attempt.minutes} min, ${first.attempt.calls} calls, branch ${branch ?? "none"}${first.attempt.error ? `, error: ${first.attempt.error}` : ""}`);
+
+  log(repo.name, "grading");
+  let verdict = await gradeAttempt({ repo, checkout: fork.checkout, forkUrl: fork.forkUrl, branch, target: options.target, dir, suffix: "" });
+  first.attempt.verdict = verdict;
+  log(repo.name, verdictWord(verdict));
+
+  if (options.retry && !verdict.maximal && !verdict.error && !first.attempt.error) {
+    log(repo.name, "retry: sending the failed checks back to the same agent");
+    const retry = await runAgent({ ...common, prompt: retryPrompt(verdict, branchName), resumeId: first.agent.agentId }, "retry");
+    attempts.push(retry.attempt);
+    branch = retry.attempt.branch ?? branch;
+    log(repo.name, `retry done in ${retry.attempt.minutes} min, ${retry.attempt.calls} calls`);
+    verdict = await gradeAttempt({ repo, checkout: fork.checkout, forkUrl: fork.forkUrl, branch, target: options.target, dir, suffix: "-retry" });
+    retry.attempt.verdict = verdict;
+    log(repo.name, `after retry: ${verdictWord(verdict)}`);
+  }
+  await first.agent.close();
+
+  const startedAt = attempts[0].startedAt;
+  const endedAt = attempts[attempts.length - 1].endedAt;
+  let cost = emptyCost();
+  try {
+    log(repo.name, "waiting for the usage ledger");
+    const events = await settledEvents(need("CURSOR_ADMIN_API_KEY"), first.agent.agentId, startedAt, endedAt);
+    cost = sumEvents(events);
+    const retryAttempt = attempts.find((attempt) => attempt.kind === "retry");
+    if (retryAttempt) {
+      const retryEvents = eventsFrom(events, retryAttempt.startedAt);
+      retryAttempt.cost = sumEvents(retryEvents);
+      attempts[0].cost = sumEvents(events.filter((event) => !retryEvents.includes(event)));
+    } else {
+      attempts[0].cost = cost;
+    }
+  } catch (error) {
+    cost = emptyCost(error instanceof Error ? error.message : String(error));
+  }
+
+  const report: Report = {
+    run: options.name,
+    repo: repo.name,
+    upstreamUrl: repo.url,
+    baseCommit: repo.baseCommit,
+    forkUrl: fork.forkUrl,
+    harnessCommit: fork.harnessCommit,
+    setup: options.setup,
+    model,
+    target: options.target,
+    retry: options.retry,
+    mavenErrors: options.mavenErrors,
+    agentId: first.agent.agentId,
+    agentUrl: agentUrl(first.agent.agentId),
+    branch,
+    attempts,
+    calls: attempts.reduce((total, attempt) => total + attempt.calls, 0),
+    minutes: Number(attempts.reduce((total, attempt) => total + attempt.minutes, 0).toFixed(2)),
+    startedAt,
+    endedAt,
+    verdict,
+    cost,
+    error: attempts.map((attempt) => attempt.error).filter(Boolean).join("; ") || cost.error || undefined,
   };
   await writeReport(dir, report);
-  if (options.setup === "env") {
-    const ndjson = await readFile(ndjsonPath, "utf8").catch(() => "");
-    const gap = envProofGap(ndjson, maximal.log);
-    if (gap) {
-      report.error = [report.error, gap].filter(Boolean).join("; ");
-      await writeReport(dir, report);
-    }
+  await appendSummary(runDir, report);
+  log(repo.name, `${verdict.maximal ? "PASS" : "fail"}, $${((cost.chargedCents ?? 0) / 100).toFixed(3)}, ${report.minutes} min, ${report.calls} calls`);
+  return report;
+}
+
+async function loadRunReports(runDir: string): Promise<Report[]> {
+  const reports: Report[] = [];
+  for (const entry of await readdir(runDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const text = await readFile(path.join(runDir, entry.name, "report.json"), "utf8").catch(() => "");
+    if (text) reports.push(JSON.parse(text) as Report);
   }
+  if (reports.length === 0) throw new Error(`No report.json under ${runDir}`);
+  return reports;
+}
+
+/**
+ * The retry lever on an earlier run: the agents that passed are copied over
+ * unchanged, the agents that missed are resumed once with the failed checks.
+ */
+async function retryOne(previous: Report, options: Options): Promise<Report> {
+  const runDir = path.join(options.out, options.name);
+  const dir = path.join(runDir, previous.repo);
+  await mkdir(dir, { recursive: true });
+  const repo: RepoRef = { name: previous.repo, url: previous.upstreamUrl, baseCommit: previous.baseCommit };
+  if (previous.verdict.maximal || previous.error) {
+    const copied: Report = { ...previous, run: options.name };
+    await writeReport(dir, copied);
+    await appendSummary(runDir, copied);
+    log(repo.name, previous.verdict.maximal ? "passed before, kept as is" : `skipped, earlier error: ${previous.error}`);
+    return copied;
+  }
+
+  const workRoot = path.join(options.out, "work", options.name);
+  const checkout = path.join(workRoot, repo.name);
+  await mkdir(workRoot, { recursive: true });
+  await git(["clone", "--quiet", "--no-tags", repo.url, checkout], workRoot).catch(() => undefined);
+  await git(["checkout", "--quiet", "--detach", repo.baseCommit], checkout);
+
+  const branchName = previous.branch ?? `migrate/${previous.run}`;
+  log(repo.name, "retry: sending the failed checks back to the same agent");
+  const retry = await runAgent(
+    {
+      forkUrl: previous.forkUrl,
+      startingRef: `harness-${previous.setup}`,
+      setup: previous.setup,
+      model: previous.model,
+      name: `${previous.setup}-${previous.model.id}-${repo.name}`,
+      metadata: { run: options.name, setup: previous.setup, model: previous.model.id, repo: repo.name },
+      prompt: retryPrompt(previous.verdict, branchName),
+      budget: options.budget,
+      ndjsonPath: path.join(dir, "run.ndjson"),
+      branch: branchName,
+      target: previous.target,
+      branchPushed: async () => Boolean(await remoteBranchSha(previous.forkUrl, branchName, need("GITHUB_TOKEN"))),
+      resumeId: previous.agentId,
+    },
+    "retry",
+  );
+  log(repo.name, `retry ${retry.attempt.stopReason} in ${retry.attempt.minutes} min, ${retry.attempt.calls} calls`);
+  const branch = retry.attempt.branch ?? previous.branch;
+  const verdict = await gradeAttempt({ repo, checkout, forkUrl: previous.forkUrl, branch, target: previous.target, dir, suffix: "-retry" });
+  retry.attempt.verdict = verdict;
+  log(repo.name, `after retry: ${verdictWord(verdict)}`);
+  await retry.agent.close();
+
+  const attempts = [...previous.attempts, retry.attempt];
+  let cost = emptyCost();
+  try {
+    log(repo.name, "waiting for the usage ledger");
+    const events = await settledEvents(need("CURSOR_ADMIN_API_KEY"), previous.agentId, previous.startedAt, retry.attempt.endedAt);
+    cost = sumEvents(events);
+    const retryEvents = eventsFrom(events, retry.attempt.startedAt);
+    retry.attempt.cost = sumEvents(retryEvents);
+    attempts[0].cost = sumEvents(events.filter((event) => !retryEvents.includes(event)));
+  } catch (error) {
+    cost = emptyCost(error instanceof Error ? error.message : String(error));
+  }
+  const report: Report = {
+    ...previous,
+    run: options.name,
+    retry: true,
+    branch,
+    attempts,
+    calls: attempts.reduce((total, attempt) => total + attempt.calls, 0),
+    minutes: Number(attempts.reduce((total, attempt) => total + attempt.minutes, 0).toFixed(2)),
+    endedAt: retry.attempt.endedAt,
+    verdict,
+    cost,
+    error: retry.attempt.error ?? cost.error,
+  };
+  await writeReport(dir, report);
+  await appendSummary(runDir, report);
+  log(repo.name, `${verdict.maximal ? "PASS" : "fail"}, $${((cost.chargedCents ?? 0) / 100).toFixed(3)} total on this agent`);
   return report;
 }
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const options = parseArgs(process.argv.slice(2));
-  const model = await pinModel(options.model);
-  process.stderr.write(`Pinned model ${model.id}\n`);
-  const repos = await selectRepos(options.setup);
-  const reports: MigrationReport[] = [];
-  const queue = [...repos];
-  const gate = { stop: false };
-  const halt = () => stopRemainingRepos(queue, gate);
+  for (const name of ["CURSOR_API_KEY", "CURSOR_ADMIN_API_KEY", "GITHUB_TOKEN", "FORK_OWNER", "MIGRATIONBENCH_DIR", "MIGRATIONBENCH_PYTHON", "JAVA17_HOME", "MAVEN_HOME"]) need(name);
+  const reports: Report[] = [];
+  let work: Array<() => Promise<Report>>;
+  if (options.retryRun) {
+    const previous = (await loadRunReports(options.retryRun)).filter((report) => !options.only || report.repo.includes(options.only));
+    const misses = previous.filter((report) => !report.verdict.maximal && !report.error).length;
+    process.stderr.write(`Run ${options.name}: retry of ${options.retryRun}, ${misses} of ${previous.length} agents get one more turn\n`);
+    work = previous.map((report) => () => retryOne(report, options));
+  } else {
+    const model = await pinModel(options.model);
+    const repos = await loadRepos(options.repos, options.only);
+    process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}, maven-errors=${options.mavenErrors}\n`);
+    work = repos.map((repo) => () => runOne(repo, options, model));
+  }
+
+  const queue = [...work];
   const workers = Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
-    for (;;) {
-      if (gate.stop) return;
-      const repo = queue.shift();
-      if (!repo) return;
-      const report = await runOne(repo, options, model, halt);
-      reports.push(report);
-      if (isUsageLimit(report.error)) return;
+    for (let job = queue.shift(); job; job = queue.shift()) {
+      try {
+        reports.push(await job());
+      } catch (error) {
+        log("run", `failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
     }
   });
   await Promise.all(workers);
-  process.stdout.write(`${JSON.stringify({ model, reports: reports.map((report) => ({
-    repo: report.repo,
-    agentUrl: report.agentUrl,
-    chargedCents: report.chargedCents,
-    minutes: report.minutes,
-    maximal: report.verdict.maximal,
-    error: report.error,
-  })) }, null, 2)}\n`);
-  if (reports.some((report) => report.error)) process.exitCode = 1;
+
+  const passed = reports.filter((report) => report.verdict.maximal).length;
+  const cents = reports.reduce((total, report) => total + (report.cost.chargedCents ?? 0), 0);
+  process.stderr.write(`\n${options.name}: ${passed}/${reports.length} passed, $${(cents / 100).toFixed(2)} charged. Summary: ${path.join(options.out, options.name, "summary.csv")}\n`);
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  if (error instanceof IntegrationNotConnectedError) {
-    process.stderr.write(`${error.provider} ${error.helpUrl}\n`);
-  }
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

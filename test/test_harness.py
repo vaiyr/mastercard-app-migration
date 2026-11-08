@@ -1,4 +1,5 @@
-import importlib.util
+"""Tests for the Python pieces copied into every fork: the hook, the pom bump, the lookup server."""
+
 import json
 import subprocess
 import sys
@@ -6,123 +7,88 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "harness" / "cursor" / "hooks"))
+sys.path.insert(0, str(ROOT / "harness" / "tools"))
 
+import bump_poms  # noqa: E402
+import guard  # noqa: E402
 
-def load(name: str, file: Path):
-    spec = importlib.util.spec_from_file_location(name, file)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(file)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-guard = load("guard", ROOT / "harness" / "cursor" / "hooks" / "guard.py")
-deps_prepass = load("deps_prepass", ROOT / "harness" / "tools" / "deps-prepass.py")
-server = load("lookup_server", ROOT / "harness" / "tools" / "deps-lookup" / "server.py")
-
-
-class GuardTest(unittest.TestCase):
-    def test_denies_skipped_tests_and_deletes(self):
-        self.assertEqual(guard.decide({"command": "mvn -DskipTests test"})["permission"], "deny")
-        self.assertEqual(guard.decide({"command": "mvn -DskipTests=false test"})["permission"], "allow")
-        self.assertEqual(guard.decide({"command": "rm -rf src/test/java/AppTest.java"})["permission"], "deny")
-
-    def test_denies_version_downgrade(self):
-        old = "<version>3.3.4</version>"
-        new = "<version>2.7.18</version>"
-        decision = guard.decide({"tool_input": {"old_string": old, "new_string": new}})
-        self.assertEqual(decision["permission"], "deny")
-        upgrade = guard.decide(
-            {"tool_input": {"old_string": new, "new_string": old}}
-        )
-        self.assertEqual(upgrade["permission"], "allow")
-
-
-class PrepassTest(unittest.TestCase):
-    def test_upgrades_parent_and_java_without_downgrade(self):
-        pom = """<project>
+POM = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
     <version>2.2.6.RELEASE</version>
   </parent>
-  <properties><java.version>1.8</java.version></properties>
+  <properties>
+    <java.version>1.8</java.version>
+    <lombok.version>${lombok.ver}</lombok.version>
+  </properties>
   <dependencies>
     <dependency>
-      <groupId>com.squareup.okhttp3</groupId>
-      <artifactId>okhttp</artifactId>
-      <version>3.14.9</version>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <version>4.5.1</version>
     </dependency>
     <dependency>
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
-      <version>1.18.34</version>
+      <version>${lombok.version}</version>
     </dependency>
   </dependencies>
 </project>
 """
-        versions = {
-            "org.springframework.boot:spring-boot-starter-parent": "3.3.4",
-            "com.squareup.okhttp3:okhttp": "4.12.0",
-            "org.projectlombok:lombok": "1.18.30",
-        }
-        updated = deps_prepass.rewrite_pom(pom, versions, "17")
-        self.assertIn("<version>3.3.4</version>", updated)
-        self.assertIn("<java.version>17</java.version>", updated)
-        self.assertIn("<version>4.12.0</version>", updated)
-        self.assertIn("<version>1.18.34</version>", updated)
-        self.assertEqual(deps_prepass.rewrite_pom(updated, versions, "17"), updated)
 
-    def test_rewrites_a_tree(self):
+VERSIONS = {
+    "org.springframework.boot:spring-boot-starter-parent": "3.3.5",
+    "org.mockito:mockito-core": "5.13.0",
+    "org.projectlombok:lombok": "1.18.34",
+}
+
+
+class GuardTest(unittest.TestCase):
+    def test_denies_skipped_or_deleted_tests(self):
+        self.assertEqual(guard.decide({"command": "mvn -DskipTests verify"})["permission"], "deny")
+        self.assertEqual(guard.decide({"command": "rm -rf src/test"})["permission"], "deny")
+        self.assertEqual(guard.decide({"command": "mvn -B clean verify"})["permission"], "allow")
+
+    def test_denies_version_downgrade(self):
+        payload = {"tool_name": "edit", "tool_input": {"old_string": "<version>5.1.0</version>", "new_string": "<version>4.9.0</version>"}}
+        self.assertEqual(guard.decide(payload)["permission"], "deny")
+
+
+class BumpPomsTest(unittest.TestCase):
+    def test_raises_pins_and_leaves_properties_alone(self):
+        out = bump_poms.rewrite_pom(POM, VERSIONS, "17")
+        self.assertIn("<version>3.3.5</version>", out)
+        self.assertIn("<version>5.13.0</version>", out)
+        self.assertIn("<java.version>17</java.version>", out)
+        self.assertIn("<version>${lombok.version}</version>", out)
+        self.assertIn("<lombok.version>${lombok.ver}</lombok.version>", out)
+
+    def test_never_lowers_a_version(self):
+        out = bump_poms.rewrite_pom(POM, {"org.mockito:mockito-core": "3.0.0"}, "17")
+        self.assertIn("<version>4.5.1</version>", out)
+
+    def test_is_idempotent(self):
+        once = bump_poms.rewrite_pom(POM, VERSIONS, "17")
+        self.assertEqual(once, bump_poms.rewrite_pom(once, VERSIONS, "17"))
+
+
+class LookupServerTest(unittest.TestCase):
+    def test_answers_tools_call(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "tools" / "deps-lookup").mkdir(parents=True)
-            (root / ".cursor").mkdir()
-            (root / ".cursor" / "harness-target").write_text("17\n", encoding="utf-8")
-            (root / "tools" / "deps-lookup" / "versions.json").write_text(
-                json.dumps({"org.example:lib": "2.0.0"}), encoding="utf-8"
-            )
-            (root / "pom.xml").write_text(
-                "<project><dependencies><dependency><groupId>org.example</groupId><artifactId>lib</artifactId><version>1.0.0</version></dependency></dependencies></project>",
-                encoding="utf-8",
-            )
-            changed = deps_prepass.rewrite_tree(root)
-            self.assertEqual(len(changed), 1)
-            self.assertIn("2.0.0", (root / "pom.xml").read_text(encoding="utf-8"))
-
-
-class LookupTest(unittest.TestCase):
-    def test_lookup_and_initialize(self):
-        server.VERSIONS = {"org.example:lib": "2.0.0"}
-        self.assertEqual(server.lookup("org.example", "lib"), "2.0.0")
-        self.assertEqual(server.lookup("org.example", "missing"), "unknown")
-        response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
-        self.assertEqual(response["result"]["serverInfo"]["name"], "deps-lookup")
-        call = server.handle(
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "lookup_dependency", "arguments": {"coordinate": "org.example:lib"}},
-            }
-        )
-        self.assertEqual(call["result"]["content"][0]["text"], "2.0.0")
-        self.assertIsNone(server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
-
-
-class HookProcessTest(unittest.TestCase):
-    def test_cli_prints_json(self):
-        script = ROOT / "harness" / "cursor" / "hooks" / "guard.py"
-        completed = subprocess.run(
-            [sys.executable, str(script)],
-            input=json.dumps({"command": "mvn test"}),
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        self.assertEqual(json.loads(completed.stdout)["permission"], "allow")
+            server_dir = Path(tmp) / "deps-lookup"
+            server_dir.mkdir()
+            (server_dir / "server.py").write_text((ROOT / "harness/tools/deps-lookup/server.py").read_text())
+            (server_dir / "versions.json").write_text(json.dumps(VERSIONS))
+            requests = [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "lookup_dependency", "arguments": {"coordinate": "org.mockito:mockito-core"}}},
+            ]
+            stdin = "".join(json.dumps(r) + "\n" for r in requests)
+            proc = subprocess.run([sys.executable, str(server_dir / "server.py")], input=stdin.encode(), capture_output=True, timeout=20)
+            self.assertIn(b"5.13.0", proc.stdout)
 
 
 if __name__ == "__main__":
