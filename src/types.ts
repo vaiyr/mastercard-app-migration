@@ -12,14 +12,14 @@ export interface Options {
   target: "17" | "21";
   name: string;
   out: string;
-  /** Resume the agents that missed in this earlier run directory, retry only. */
-  retryRun?: string;
 }
 
 export interface RepoRef {
   name: string;
   url: string;
   baseCommit: string;
+  /** Tests that ran at the base commit, when the manifest records it. */
+  tests?: number;
 }
 
 export interface PinnedModel {
@@ -45,6 +45,8 @@ export interface Verdict {
   classMajors: number[];
   tests: number | null;
   testsRequired: number;
+  /** Where the r4 baseline came from: given, a JDK home it was measured on, cached, or none. */
+  testsBaseline: string;
   trackedDependencies: number;
   dependencyMisses: DependencyMiss[];
   diffApplied: boolean;
@@ -52,8 +54,6 @@ export interface Verdict {
   verifyErrors?: string[];
   /** Why r3 failed: test files added or removed, methods added or removed. */
   testSetChanges?: string[];
-  official?: { maximal: boolean; minimal: boolean };
-  agreesWithOfficial?: boolean;
   error?: string;
 }
 

@@ -11,8 +11,6 @@ export const USAGE = `Usage: npm run harness -- --setup h1|h2 --repos repos/<set
   --only <text>         Run only rows whose name or url contains this text.
   --model <id>          Catalog id from Cursor.models.list(). Default composer-2.5.
   --retry               After grading, send the failed checks back to the same agent once.
-  --retry-run <dir>     Retry only: resume the agents that missed in out/<run> and grade again.
-                        Setup, model and repos come from that run's reports.
   --maven-errors        h2 only. Run Maven locally on the bumped tree and put its errors in the first prompt.
   --concurrency <n>     Agents in flight at once, 1 to ${MAX_CONCURRENCY}. Default 1.
   --budget <n>          Tool calls per agent before the run is cancelled. Default 200.
@@ -48,7 +46,6 @@ export function parseArgs(argv: string[]): Options {
     target: "17" as "17" | "21",
     name: undefined as string | undefined,
     out: "out",
-    retryRun: undefined as string | undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -88,9 +85,6 @@ export function parseArgs(argv: string[]): Options {
         options.target = raw;
         break;
       }
-      case "--retry-run":
-        options.retryRun = path.resolve(value(argv, i++));
-        break;
       case "--name":
         options.name = value(argv, i++);
         break;
@@ -100,12 +94,6 @@ export function parseArgs(argv: string[]): Options {
       default:
         throw new Error(`Unknown flag ${flag}\n\n${USAGE}`);
     }
-  }
-  if (options.retryRun) {
-    setup ??= "h2";
-    repos ??= options.retryRun;
-    options.retry = true;
-    options.name ??= `${path.basename(options.retryRun)}-retry`;
   }
   if (!setup) throw new Error(`--setup is required\n\n${USAGE}`);
   if (!repos) throw new Error(`--repos is required\n\n${USAGE}`);

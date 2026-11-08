@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Draw the deck figures from summary.csv files.
+"""Draw the results figure from summary.csv files.
 
-    python3 scripts/figures.py ladder results/practice-h1.csv results/practice-h2.csv ... -o results/figures/ladder.png
-    python3 scripts/figures.py models results/mastercard-composer.csv results/mastercard-grok.csv -o results/figures/mastercard.png
+    python3 scripts/figures.py results/mastercard-*.csv --labels "Composer, H2" ... -o results/figures/mastercard.png
 
-ladder: one bar per step (distinct repos passing) with the step's total dollars under
-each label. A step CSV may list a repo twice (first run plus a later lever); passes
-count the repo once and dollars count every run.
-models: one row per repo, one marker per model, x = dollars, filled when the run passed.
+One row per repo, one marker per run, x = dollars charged, filled when the run passed all five checks.
 """
 
 import argparse
@@ -45,29 +41,6 @@ def style(ax):
     ax.tick_params(colors=INK_2, labelsize=10)
     ax.yaxis.grid(True, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
-
-
-def ladder(paths, labels, out):
-    fig, ax = plt.subplots(figsize=(8, 4.2), dpi=200)
-    style(ax)
-    xs, passes, totals, n = [], [], [], 0
-    for index, path in enumerate(paths):
-        rows = load(path)
-        repos = {row["repo"] for row in rows}
-        n = max(n, len(repos))
-        xs.append(index)
-        passes.append(len({row["repo"] for row in rows if row["maximal"] == "1"}))
-        totals.append(sum(cents(row) for row in rows) / 100)
-    bars = ax.bar(xs, passes, width=0.55, color=SERIES[0], linewidth=0)
-    for bar, value in zip(bars, passes):
-        ax.text(bar.get_x() + bar.get_width() / 2, value + 0.15, f"{value}/{n}", ha="center", va="bottom", color=INK, fontsize=11)
-    ax.set_xticks(xs)
-    ax.set_xticklabels([f"{label}\n${total:.2f}" for label, total in zip(labels, totals)], color=INK_2)
-    ax.set_ylim(0, n + 1)
-    ax.set_ylabel("apps passing all five checks", color=INK_2)
-    ax.set_title("Practice set: each lever, passes and total spend", loc="left", color=INK, fontsize=12)
-    fig.tight_layout()
-    fig.savefig(out)
 
 
 def models(paths, labels, out):
@@ -112,13 +85,12 @@ def models(paths, labels, out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("kind", choices=["ladder", "models"])
     parser.add_argument("paths", nargs="+")
     parser.add_argument("--labels", nargs="*", help="one per path; defaults to the run column")
     parser.add_argument("-o", "--out", required=True)
     args = parser.parse_args()
     labels = args.labels or [load(path)[0]["run"] for path in args.paths]
-    (ladder if args.kind == "ladder" else models)(args.paths, labels, args.out)
+    models(args.paths, labels, args.out)
     print(args.out)
 
 

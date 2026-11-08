@@ -5,7 +5,7 @@ import type { Verdict } from "../src/types.js";
 
 const r5Miss: Verdict = {
   r1: true, r2: true, r3: true, r4: true, r5: false, minimal: true, maximal: false,
-  classMajors: [61], tests: 18, testsRequired: 18, trackedDependencies: 12,
+  classMajors: [61], tests: 18, testsRequired: 18, testsBaseline: "given", trackedDependencies: 12,
   dependencyMisses: [{ dependency: "org.mockito:mockito-core", expected: "5.13.0", got: "4.5.1" }],
   diffApplied: true,
 };

@@ -1,0 +1,2 @@
+run,repo,setup,model,retry,maven_errors,r1,r2,r3,r4,r5,maximal,stop_reason,nudged,calls,minutes,started_at,ended_at,charged_cents,total_cents,first_charged_cents,retry_charged_cents,dependency_misses,agent_url,branch,error
+proof,location-intelligence-places-reference-app,h2,composer-2.5,1,0,1,1,1,1,1,1,finished,0,34,1.88,2026-11-08T17:55:44.319Z,2026-11-08T17:57:37.369Z,4.7276,15.2504,4.7276,,,https://cursor.com/agents/bc-9a20970e-fd07-41b4-b67a-7d821b7db7af,migrate/proof,

@@ -1,3 +1,0 @@
-repo,github_url,base_commit,loc,tests,spring_boot
-mastercard-idservice-tp-reference-app,https://github.com/Mastercard/mastercard-idservice-tp-reference-app,8be22d419f0831efe15d68b682b54074cb8133c9,7489,135,2.2.6.RELEASE
-mastercard-idservice-idp-reference-app,https://github.com/Mastercard/mastercard-idservice-idp-reference-app,7056a3468daf6a6edd36aaed517c0af1cc351f51,1742,28,2.2.6.RELEASE

@@ -7,6 +7,8 @@ test("csv rows become repo refs", () => {
   const repos = reposFromRecords(rows);
   assert.deepEqual(repos.map((repo) => repo.name), ["a", "b"]);
   assert.equal(repos[0].baseCommit, "abc");
+  assert.equal(repos[0].tests, undefined);
+  assert.equal(reposFromRecords([{ github_url: "u", base_commit: "c", tests: "28" }])[0].tests, 28);
 });
 
 test("a row without a base commit is rejected", () => {

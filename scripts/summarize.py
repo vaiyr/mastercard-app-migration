@@ -4,7 +4,7 @@
     python3 scripts/summarize.py results/*.csv
     python3 scripts/summarize.py out/*/summary.csv
 
-One row per run in the input. Output: a per-run table and a per-(run) ladder
+One row per run in the input. Output: a per-run table and per-run totals
 with passes, cents, minutes, and tool calls.
 """
 
@@ -45,16 +45,16 @@ def main(paths):
             f"{num(row['charged_cents']) / 100:>7.3f} {row.get('stop_reason', '')[:12]:12}"
         )
     print()
-    ladder = OrderedDict()
+    totals = OrderedDict()
     for row in rows:
-        entry = ladder.setdefault(row["run"], {"n": 0, "pass": 0, "cents": 0.0, "minutes": 0.0, "calls": 0, "model": row["model"], "setup": row["setup"]})
+        entry = totals.setdefault(row["run"], {"n": 0, "pass": 0, "cents": 0.0, "minutes": 0.0, "calls": 0, "model": row["model"], "setup": row["setup"]})
         entry["n"] += 1
         entry["pass"] += row["maximal"] == "1"
         entry["cents"] += num(row["charged_cents"])
         entry["minutes"] += num(row["minutes"])
         entry["calls"] += int(num(row["calls"]))
     print(f"{'run':34} {'setup':5} {'model':14} {'pass':>7} {'$ total':>8} {'$/app':>7} {'min/app':>8} {'calls/app':>9}")
-    for name, entry in ladder.items():
+    for name, entry in totals.items():
         n = entry["n"] or 1
         print(
             f"{name[:34]:34} {entry['setup']:5} {entry['model'][:14]:14} {entry['pass']:>3}/{entry['n']:<3} "

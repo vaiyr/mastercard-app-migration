@@ -24,11 +24,3 @@ test("maven errors only make sense for h2 and concurrency is capped", () => {
   assert.throws(() => parseArgs(["--setup", "h1", "--repos", "a.csv", "--maven-errors"]), /only applies/);
   assert.throws(() => parseArgs(["--setup", "h1", "--repos", "a.csv", "--concurrency", "9"]), /1 to 5/);
 });
-
-test("retry-run fills setup, repos, retry and a default name", () => {
-  const options = parseArgs(["--retry-run", "out/practice-h2"]);
-  assert.equal(options.retry, true);
-  assert.equal(options.setup, "h2");
-  assert.equal(options.name, "practice-h2-retry");
-  assert.match(options.retryRun ?? "", /out\/practice-h2$/);
-});

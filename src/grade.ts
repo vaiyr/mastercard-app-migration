@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { javaEnv, need } from "./env.js";
+import { javaEnv } from "./env.js";
 import type { Verdict } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -19,7 +19,7 @@ export function failedVerdict(error: string): Verdict {
   return {
     r1: false, r2: false, r3: false, r4: false, r5: false,
     minimal: false, maximal: false,
-    classMajors: [], tests: null, testsRequired: -10,
+    classMajors: [], tests: null, testsRequired: -10, testsBaseline: "none",
     trackedDependencies: 0, dependencyMisses: [], diffApplied: false,
     error,
   };
@@ -43,18 +43,22 @@ export async function gradeDiff(input: {
   diffPath: string;
   target: string;
   logPath: string;
-  official?: boolean;
+  /** r4 baseline when the manifest knows it; otherwise the grader measures it at the base commit. */
+  testsRequired?: number;
+  baselineCache: string;
 }): Promise<Verdict> {
-  const python = need("MIGRATIONBENCH_PYTHON");
+  const python = process.env.GRADER_PYTHON || path.resolve(".venv", "bin", "python");
   const args = [
     GRADER,
     "--github-url", input.githubUrl,
     "--base-commit", input.baseCommit,
     "--diff", input.diffPath,
     "--class-major", String(classMajor(input.target)),
-    ...(input.official ? ["--official"] : []),
+    "--baseline-cache", input.baselineCache,
+    ...(input.testsRequired !== undefined ? ["--tests-required", String(input.testsRequired)] : []),
+    ...(process.env.JAVA8_HOME ? ["--java8-home", process.env.JAVA8_HOME] : []),
   ];
-  const env = { ...javaEnv(), PYTHONPATH: path.join(need("MIGRATIONBENCH_DIR"), "src") };
+  const env = javaEnv();
   let stdout = "";
   let stderr = "";
   try {

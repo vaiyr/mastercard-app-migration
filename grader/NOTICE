@@ -1,0 +1,4 @@
+dependency_version.json is the reference table from MigrationBench
+(https://github.com/amazon-science/MigrationBench), Copyright Amazon.com, Inc.
+or its affiliates, Apache License 2.0. grade.py reimplements that project's
+five migration checks; it does not copy its code.

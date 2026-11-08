@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { classMajor, parseGraderOutput } from "../src/grade.js";
 
 test("the grader's last line is the verdict", () => {
-  const verdict = parseGraderOutput('noise\n{"r1":true,"r2":true,"r3":true,"r4":true,"r5":false,"minimal":true,"maximal":false,"classMajors":[61],"tests":18,"testsRequired":18,"trackedDependencies":3,"dependencyMisses":[],"diffApplied":true}\n');
+  const verdict = parseGraderOutput('noise\n{"r1":true,"r2":true,"r3":true,"r4":true,"r5":false,"minimal":true,"maximal":false,"classMajors":[61],"tests":18,"testsRequired":18,"testsBaseline":"given","trackedDependencies":3,"dependencyMisses":[],"diffApplied":true}\n');
   assert.equal(verdict.maximal, false);
   assert.equal(verdict.r5, false);
 });

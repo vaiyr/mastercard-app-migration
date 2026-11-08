@@ -1,2 +1,0 @@
-run,repo,setup,model,retry,maven_errors,r1,r2,r3,r4,r5,maximal,stop_reason,nudged,calls,minutes,started_at,ended_at,charged_cents,total_cents,first_charged_cents,retry_charged_cents,dependency_misses,agent_url,branch,error
-proof-h2-composer,demo-security-spring2,h2,composer-2.5,0,0,1,1,1,1,1,1,finished,0,48,1.89,2026-11-08T15:55:34.267Z,2026-11-08T15:57:27.821Z,6.2478,20.1544,6.2478,,,https://cursor.com/agents/bc-fb29913f-c047-4843-b101-ad9392ff2db6,migrate/proof-h2-composer,

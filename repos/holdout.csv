@@ -1,9 +1,0 @@
-repo,github_url,base_commit,loc,tests,spring_boot
-pair-distribution-app,https://github.com/SAP/pair-distribution-app,4d0ca2bdd77f0e49933d7ef9c2c7edf88848bb02,3460,131,2.0.5.RELEASE
-LPVS,https://github.com/Samsung/LPVS,6f42f4320a90b7e9c11d8305a0fd9f9f20d354cd,3359,45,2.7.2
-spring-petclinic-rest,https://github.com/spring-petclinic/spring-petclinic-rest,0dbb71e6f4d0ec5939d597650b9ca7bca27eeda0,7772,172,2.6.2
-loan-approval-portal-spring-boot,https://github.com/htr3n/loan-approval-portal-spring-boot,f12c479f13d9e7b6957d9774e57bde4c975d51be,7215,56,2.1.2.RELEASE
-poli,https://github.com/shzlw/poli,5b90d6adc6f839866cb77854ad33f3cd9e1e26e8,7520,59,2.2.6.RELEASE
-dddsample-core,https://github.com/citerus/dddsample-core,04cfae9e67683fc56e41606673829d271db20638,9297,76,2.0.1.RELEASE
-ecommerce-rest-spring-jpa,https://github.com/Damiox/ecommerce-rest-spring-jpa,14b7395ecc26e8c4c5eea1dcba9565aa021ee9af,2754,24,2.0.1.RELEASE
-contessa,https://github.com/olle/contessa,e55562d3594e472d280605305d2f155e69a5fe83,4746,21,2.0.2.RELEASE

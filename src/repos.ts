@@ -48,7 +48,8 @@ export function reposFromRecords(records: Record<string, string>[]): RepoRef[] {
     const baseCommit = record.base_commit;
     if (!url || !baseCommit) throw new Error("Each row needs github_url and base_commit");
     const name = (record.repo || url).split("/").filter(Boolean).pop() ?? "repo";
-    return { name, url, baseCommit };
+    const tests = /^\d+$/.test(record.tests ?? "") ? Number(record.tests) : undefined;
+    return { name, url, baseCommit, ...(tests !== undefined ? { tests } : {}) };
   });
 }
 

@@ -13,7 +13,7 @@ test("a report becomes one csv row with every column", () => {
       { kind: "retry", stopReason: "finished", startedAt: "s2", endedAt: "e2", minutes: 2, calls: 10, cost: { chargedCents: 6.4, totalCents: 8, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, events: 3 } },
     ],
     calls: 30, minutes: 5, startedAt: "s", endedAt: "e2",
-    verdict: { r1: true, r2: true, r3: true, r4: true, r5: true, minimal: true, maximal: true, classMajors: [61], tests: 18, testsRequired: 18, trackedDependencies: 9, dependencyMisses: [], diffApplied: true },
+    verdict: { r1: true, r2: true, r3: true, r4: true, r5: true, minimal: true, maximal: true, classMajors: [61], tests: 18, testsRequired: 18, testsBaseline: "given", trackedDependencies: 9, dependencyMisses: [], diffApplied: true },
     cost: { chargedCents: 9.8, totalCents: 13, inputTokens: 2, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, events: 5 },
   };
   const cells = summaryRow(report).split(",");

@@ -1,152 +1,303 @@
 #!/usr/bin/env python3
-"""Grade one migration diff with MigrationBench, one criterion at a time.
+"""Grade one Java migration diff with the five MigrationBench checks.
 
-MigrationBench's run_eval prints a single pass or fail. This script calls the
-same library functions in the same order and reports each check separately:
+The checks follow MigrationBench (Amazon Science, KDD 2026) and its reference
+dependency table, reimplemented here so the harness has no dependency on that
+repository or on its dataset download:
 
-  r1  mvn clean verify passes on the target JDK
-  r2  every compiled class has the target major version (61 for Java 17)
-  r3  the set of test methods is unchanged
-  r4  the test count did not drop below the dataset's count
-  r5  every tracked dependency is at its latest major (the maximal migration rule)
+  r1  `mvn clean verify` passes on the target JDK
+  r2  every compiled main class has the target major version (61 for Java 17)
+  r3  the test files, their classes and their methods are the same set as before
+  r4  at least as many tests run as ran at the base commit
+  r5  every tracked dependency is at or above its latest major in dependency_version.json
 
-Prints one JSON object on stdout. Logs go to stderr. Run with the python that
-has MigrationBench installed; JAVA_HOME and mvn must point at Java 17.
+Pass (the "maximal migration") is r1 through r5. The "minimal migration" is r1
+through r4. Prints one JSON object on stdout; logs go to stderr.
+
+Environment: JAVA_HOME and `mvn` on PATH must be the target JDK. The r4 baseline
+is taken from --tests-required when given, otherwise it is measured by running
+`mvn test` at the base commit on --java8-home (falling back to the target JDK)
+and cached under --baseline-cache.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
+import glob
+import hashlib
 import json
 import logging
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
-import git
+import javalang
+from packaging.version import InvalidVersion, Version
 
-from migration_bench.common import eval_utils, git_repo, hash_utils, maven_utils, utils
-from migration_bench.eval import final_eval
-from migration_bench.lang.java.eval import parse_file, parse_repo
+HERE = Path(__file__).resolve().parent
+DEPENDENCY_VERSIONS = HERE / "dependency_version.json"
+MAVEN_TIMEOUT_S = 20 * 60
+TEST_DIR = "src/test"
 
-LHS_BRANCH = final_eval.LHS_BRANCH
-
-
-def dependency_misses(root: str) -> tuple[list[dict], int]:
-    """eval_utils.check_version, but returning the failing list instead of a bool."""
-    import glob
-
-    tracked = set()
-    for pom in glob.glob(os.path.join(root, "**", "pom.xml"), recursive=True):
-        tracked.update(eval_utils.extract_dependencies(pom))
-    tree = eval_utils.generate_dependency_tree(root)
-    if not tree:
-        return [{"dependency": "dependency:tree failed"}], 0
-    effective = eval_utils.get_effective_versions(tree, tracked)
-    expected = utils.load_json(eval_utils.DEPENDENCY_VERSION) or {}
-    misses = []
-    for dep, got in effective.items():
-        want = expected.get(dep)
-        if want is None:
-            continue
-        if not eval_utils.compare_major_versions(got, want):
-            misses.append({"dependency": dep, "expected": want, "got": got})
-    os.remove(tree)
-    return misses, len(effective)
+log = logging.getLogger("grade")
 
 
-def error_lines(log: str, limit: int = 40) -> list[str]:
-    """The compiler and test failure lines from a Maven log, for the report."""
+def sh(args: list[str], cwd: str, env: dict | None = None, timeout: int = MAVEN_TIMEOUT_S) -> tuple[int, str]:
+    """Run a command, return (exit code, combined output)."""
+    log.info("CMD %s (cwd %s)", " ".join(args), cwd)
+    try:
+        done = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", timeout=timeout)
+        return done.returncode, done.stdout
+    except subprocess.TimeoutExpired as exc:
+        return 124, (exc.stdout or "") + f"\n[grader] timed out after {timeout}s"
+
+
+def mvn(goals: list[str], cwd: str, java_home: str | None = None) -> tuple[int, str]:
+    env = dict(os.environ)
+    if java_home:
+        env["JAVA_HOME"] = java_home
+        env["PATH"] = f"{java_home}/bin:{env.get('PATH', '')}"
+    sh(["mvn", "-B", "-q", "dependency:resolve"], cwd, env)
+    return sh(["mvn", "-B"] + goals, cwd, env)
+
+
+def error_lines(output: str, limit: int = 40) -> list[str]:
     keep = ("[ERROR]", "BUILD FAILURE", "COMPILATION ERROR", "Tests run:", "Failed tests")
-    lines = [line.rstrip() for line in log.splitlines() if any(k in line for k in keep)]
-    return lines[:limit]
+    return [line.rstrip() for line in output.splitlines() if any(k in line for k in keep)][:limit]
 
 
-def test_set_changes(root: str) -> list[str]:
-    """Why r3 failed, in words: test files added or removed, and methods added or removed per file."""
-    before = parse_repo.get_repo_test_files(root, LHS_BRANCH) or {}
-    after = parse_repo.get_repo_test_files(root) or {}
-    rel = lambda path: os.path.relpath(path, root)
+# r2 ------------------------------------------------------------------------
+
+def class_majors(root: str) -> set[int]:
+    """Major versions of every compiled main class (target/classes), read from the class file header."""
+    majors = set()
+    for path in glob.glob(os.path.join(root, "**", "target", "classes", "**", "*.class"), recursive=True):
+        with open(path, "rb") as handle:
+            header = handle.read(8)
+        if len(header) == 8 and header[:4] == b"\xca\xfe\xba\xbe":
+            majors.add(int.from_bytes(header[6:8], "big"))
+    return majors
+
+
+# r3 ------------------------------------------------------------------------
+
+def test_files(root: str) -> dict[str, tuple | None]:
+    """Repo-relative test file -> parsed (classes, methods) tuple, or None when javalang cannot parse it."""
+    found = {}
+    for path in glob.glob(os.path.join(root, "**", "*.java"), recursive=True):
+        rel = os.path.relpath(path, root)
+        if ".git" in rel.split(os.sep) or f"/{TEST_DIR}/" not in f"/{rel}" or not fnmatch.fnmatch(os.path.basename(rel), "*.java"):
+            continue
+        found[rel] = parse_java(path)
+    return found
+
+
+def parse_java(path: str) -> tuple | None:
+    """Classes, interfaces, enums and methods in declaration order; methods carry an is-@Test flag (MigrationBench's shape)."""
+    try:
+        tree = javalang.parse.parse(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except Exception:  # javalang raises several unrelated types
+        return None
+    nodes = []
+    for _, node in tree:
+        if isinstance(node, (javalang.tree.ClassDeclaration, javalang.tree.InterfaceDeclaration, javalang.tree.EnumDeclaration, javalang.tree.AnnotationDeclaration)):
+            nodes.append(("type", node.name))
+        elif isinstance(node, javalang.tree.MethodDeclaration):
+            is_test = any(annotation.name == "Test" for annotation in node.annotations)
+            nodes.append(("method", node.name, is_test))
+    return tuple(nodes)
+
+
+def test_set_changes(before: dict, after: dict) -> list[str]:
     changes = []
     for path in sorted(set(after) - set(before)):
-        changes.append(f"added test file {rel(path)}")
+        changes.append(f"added test file {path}")
     for path in sorted(set(before) - set(after)):
-        changes.append(f"removed test file {rel(path)}")
+        changes.append(f"removed test file {path}")
     for path in sorted(set(before) & set(after)):
         lhs, rhs = before[path], after[path]
-        if lhs is None or rhs is None:
-            if lhs != rhs:
-                changes.append(f"{rel(path)} no longer parses as Java")
-            continue
         if lhs == rhs:
             continue
-        names = lambda nodes: {node[1][0] if node[0] == parse_file.METHOD else node[1] for node in nodes}
-        gone = sorted(names(lhs) - names(rhs))
-        new = sorted(names(rhs) - names(lhs))
+        if lhs is None or rhs is None:
+            changes.append(f"{path} no longer parses as Java" if rhs is None else f"{path} did not parse before and does now")
+            continue
+        names = lambda nodes: {node[1] for node in nodes}
+        gone, new = sorted(names(lhs) - names(rhs)), sorted(names(rhs) - names(lhs))
         if gone:
-            changes.append(f"{rel(path)}: removed or renamed {', '.join(gone)}")
+            changes.append(f"{path}: removed or renamed {', '.join(gone)}")
         if new:
-            changes.append(f"{rel(path)}: added {', '.join(new)}")
+            changes.append(f"{path}: added {', '.join(new)}")
         if not gone and not new:
-            changes.append(f"{rel(path)}: a method lost or gained its @Test annotation")
+            changes.append(f"{path}: a method lost or gained its @Test annotation, or declarations were reordered")
     return changes
 
 
-def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -> dict:
-    with tempfile.TemporaryDirectory() as root:
-        local = git.Repo.clone_from(github_url, root)
-        local.git.checkout(base_commit)
-        repo = git_repo.GitRepo(root)
-        repo.new_branch(LHS_BRANCH)
-        if os.path.getsize(diff_file) > 0:
-            repo.apply(diff_file)
-        applied = len(local.git.status("--porcelain").splitlines()) > 0
+# r4 ------------------------------------------------------------------------
 
-        verify = maven_utils.do_run_maven_command(
-            maven_utils.MVN_CLEAN_VERIFY.format(root_dir=root), check=False
-        )
-        r1 = verify.return_code == 0
-        verify_errors = [] if r1 else error_lines(verify.stdout or "")
-        majors = sorted(utils.get_compiled_java_major_versions(root)) if r1 else []
+def count_tests(output: str) -> int:
+    """Total from Surefire's `[INFO] Results:` block. -2 when Maven never got there, -1 when the block has no total."""
+    segments = output.split("[INFO] Results:\n")
+    if len(segments) <= 1:
+        return -2
+    for line in segments[-1].splitlines():
+        if line.strip() == "[INFO]":
+            continue
+        match = re.search(r"^\[INFO\]\s+Tests run:\s+(\d+),", line)
+        if match:
+            return int(match.group(1))
+    return -1
+
+
+def baseline_tests(root: str, github_url: str, base_commit: str, java8_home: str | None, cache_dir: str | None) -> tuple[int, str]:
+    """Tests that run at the base commit, measured once per (repo, commit) and cached."""
+    key = hashlib.sha1(f"{github_url}@{base_commit}".encode()).hexdigest()[:16]
+    cache = Path(cache_dir) / f"{key}.json" if cache_dir else None
+    if cache and cache.is_file():
+        data = json.loads(cache.read_text())
+        return data["tests"], f"cached {data['source']}"
+    for home in (java8_home, os.environ.get("JAVA_HOME")):
+        if not home or not os.path.isdir(home):
+            continue
+        _, output = mvn(["test", "-f", "."], root, java_home=home)
+        tests = count_tests(output)
+        if tests >= 0:
+            if cache:
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps({"tests": tests, "source": home}))
+            return tests, home
+    return -10, "unmeasurable"
+
+
+# r5 ------------------------------------------------------------------------
+
+def declared_dependencies(root: str) -> set[str]:
+    """groupId:artifactId of every <dependency> in every pom.xml."""
+    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+    tracked = set()
+    for pom in glob.glob(os.path.join(root, "**", "pom.xml"), recursive=True):
+        if "/target/" in pom:
+            continue
+        text = re.sub(r"^\s+", "", Path(pom).read_text(encoding="utf-8", errors="replace"), flags=re.MULTILINE)
+        try:
+            tree = ET.fromstring(text)
+        except ET.ParseError:
+            continue
+        deps = tree.findall(".//m:dependency", ns) or tree.findall(".//dependency")
+        for dep in deps:
+            group = dep.find("m:groupId", ns) if dep.find("m:groupId", ns) is not None else dep.find("groupId")
+            artifact = dep.find("m:artifactId", ns) if dep.find("m:artifactId", ns) is not None else dep.find("artifactId")
+            if group is not None and artifact is not None and group.text and artifact.text:
+                tracked.add(f"{group.text.strip()}:{artifact.text.strip()}")
+    return tracked
+
+
+def effective_versions(tree_output: str, tracked: set[str]) -> dict[str, str]:
+    """Direct dependencies from `mvn dependency:tree` (the `+-` and `\\-` lines at depth one)."""
+    versions = {}
+    for line in tree_output.splitlines():
+        if not (line.startswith("[INFO] +- ") or line.startswith("[INFO] \\- ")):
+            continue
+        parts = line.split(" ")[-1].strip().split(":")
+        if len(parts) != 5:
+            continue
+        coordinate = f"{parts[0]}:{parts[1]}"
+        if coordinate in tracked:
+            versions[coordinate] = parts[3]
+    return versions
+
+
+def major_at_least(have: str, want: str) -> bool:
+    try:
+        return Version(have).major >= Version(want).major
+    except InvalidVersion:
+        digits = lambda value: [int(x) for x in re.findall(r"\d+", value)] or [0]
+        return digits(have)[0] >= digits(want)[0]
+
+
+def dependency_misses(root: str) -> tuple[list[dict], int]:
+    tracked = declared_dependencies(root)
+    code, output = sh(["mvn", "-B", "dependency:tree"], root, dict(os.environ))
+    if code != 0:
+        return [{"dependency": "dependency:tree failed"}], 0
+    have = effective_versions(output, tracked)
+    expected = json.loads(DEPENDENCY_VERSIONS.read_text())
+    misses = [
+        {"dependency": dep, "expected": expected[dep], "got": version}
+        for dep, version in have.items()
+        if dep in expected and not major_at_least(version, expected[dep])
+    ]
+    return misses, len(have)
+
+
+# ---------------------------------------------------------------------------
+
+def grade(github_url: str, base_commit: str, diff_file: str, class_major: int, tests_required: int | None, java8_home: str | None, cache_dir: str | None) -> dict:
+    root = tempfile.mkdtemp(prefix="grade-")
+    try:
+        code, output = sh(["git", "clone", "--quiet", github_url, root], cwd=os.getcwd())
+        if code != 0:
+            return failed(f"clone failed: {output[-300:]}")
+        code, output = sh(["git", "checkout", "--quiet", "--detach", base_commit], root)
+        if code != 0:
+            return failed(f"checkout {base_commit} failed: {output[-300:]}")
+
+        before = test_files(root)
+        if tests_required is None:
+            tests_required, baseline_source = baseline_tests(root, github_url, base_commit, java8_home, cache_dir)
+            sh(["git", "clean", "-fdxq"], root)
+        else:
+            baseline_source = "given"
+
+        applied = False
+        if os.path.getsize(diff_file) > 0:
+            code, output = sh(["git", "apply", os.path.abspath(diff_file)], root)
+            if code != 0:
+                return failed(f"git apply failed: {output[-300:]}")
+            applied = True
+
+        code, verify_output = mvn(["clean", "verify"], root)
+        r1 = code == 0
+        majors = sorted(class_majors(root)) if r1 else []
         r2 = r1 and majors == [class_major]
         misses, tracked = dependency_misses(root) if r1 else ([], 0)
         r5 = r1 and not misses
 
-        required = final_eval.DATASET_NUM_TESTS.get(
-            github_url, final_eval.DATASET_NUM_TESTS.get(final_eval.alias(github_url), -10)
-        )
-        tests_run = maven_utils.do_run_maven_command(
-            maven_utils.MVN_NUM_TESTS.format(root_dir=root), check=False
-        )
-        tests = hash_utils.get_num_test_cases(root, tests_run.stdout)
-        r4 = required < 0 or (tests is not None and tests >= required)
-        r3 = bool(parse_repo.same_repo_test_files(root, lhs_branch=LHS_BRANCH)[-1])
-        test_changes = [] if r3 else test_set_changes(root)
+        _, test_output = mvn(["test", "-f", "."], root)
+        tests = count_tests(test_output)
+        r4 = tests_required < 0 or tests >= tests_required
 
+        after = test_files(root)
+        changes = test_set_changes(before, after)
+        r3 = not changes
+
+        return {
+            "r1": r1, "r2": r2, "r3": r3, "r4": r4, "r5": r5,
+            "minimal": r1 and r2 and r3 and r4,
+            "maximal": r1 and r2 and r3 and r4 and r5,
+            "classMajors": majors,
+            "tests": tests, "testsRequired": tests_required, "testsBaseline": baseline_source,
+            "trackedDependencies": tracked, "dependencyMisses": misses,
+            "diffApplied": applied,
+            "verifyErrors": [] if r1 else error_lines(verify_output),
+            "testSetChanges": changes,
+        }
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def failed(error: str) -> dict:
     return {
-        "r1": r1, "r2": r2, "r3": r3, "r4": r4, "r5": r5,
-        "minimal": r1 and r2 and r3 and r4,
-        "maximal": r1 and r2 and r3 and r4 and r5,
-        "classMajors": majors,
-        "tests": tests, "testsRequired": required,
-        "trackedDependencies": tracked, "dependencyMisses": misses,
-        "diffApplied": applied,
-        "verifyErrors": verify_errors,
-        "testSetChanges": test_changes,
+        "r1": False, "r2": False, "r3": False, "r4": False, "r5": False, "minimal": False, "maximal": False,
+        "classMajors": [], "tests": None, "testsRequired": -10, "testsBaseline": "none",
+        "trackedDependencies": 0, "dependencyMisses": [], "diffApplied": False, "verifyErrors": [], "testSetChanges": [],
+        "error": error,
     }
-
-
-def official(github_url: str, base_commit: str, diff_file: str, class_major: int) -> dict:
-    """The stock MigrationBench verdicts, for checking that grade() agrees."""
-    out = {}
-    for name, maximal in (("maximal", 1), ("minimal", 0)):
-        out[name] = bool(final_eval.run_eval(
-            github_url, diff_file, None, commit_id=base_commit,
-            require_maximal_migration=maximal,
-            require_compiled_java_major_version=class_major,
-        ))
-    return out
 
 
 def main() -> None:
@@ -155,19 +306,12 @@ def main() -> None:
     parser.add_argument("--base-commit", required=True)
     parser.add_argument("--diff", required=True, help="git diff from the base commit; may be empty")
     parser.add_argument("--class-major", type=int, default=61, help="61 for Java 17, 65 for Java 21")
-    parser.add_argument("--official", action="store_true", help="also run MigrationBench run_eval and report agreement")
+    parser.add_argument("--tests-required", type=int, default=None, help="r4 baseline; measured at the base commit when omitted")
+    parser.add_argument("--java8-home", default=os.environ.get("JAVA8_HOME"), help="JDK used to measure the baseline")
+    parser.add_argument("--baseline-cache", default=None, help="directory for measured baselines")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format=utils.LOGGING_FORMAT, stream=sys.stderr)
-
-    args.diff = os.path.abspath(args.diff)
-    result = grade(args.github_url, args.base_commit, args.diff, args.class_major)
-    if args.official:
-        result["official"] = official(args.github_url, args.base_commit, args.diff, args.class_major)
-        result["agreesWithOfficial"] = (
-            result["official"]["maximal"] == result["maximal"]
-            and result["official"]["minimal"] == result["minimal"]
-        )
-    print(json.dumps(result))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
+    print(json.dumps(grade(args.github_url, args.base_commit, args.diff, args.class_major, args.tests_required, args.java8_home, args.baseline_cache)))
 
 
 if __name__ == "__main__":

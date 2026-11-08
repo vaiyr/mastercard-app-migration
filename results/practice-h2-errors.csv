@@ -1,3 +1,0 @@
-run,repo,setup,model,retry,maven_errors,r1,r2,r3,r4,r5,maximal,stop_reason,nudged,calls,minutes,started_at,ended_at,charged_cents,total_cents,first_charged_cents,retry_charged_cents,dependency_misses,agent_url,branch,error
-practice-h2-errors,java-getting-started,h2,composer-2.5,1,1,1,1,0,1,1,0,finished+finished,0,101,3.65,2026-11-08T16:53:55.656Z,2026-11-08T16:57:50.711Z,21.3069,68.7321,11.3667,9.9403,,https://cursor.com/agents/bc-1852067e-a0fa-482c-bd0e-86f5f4f40734,migrate/practice-h2-errors,
-practice-h2-errors,spring-react-boilerplate,h2,composer-2.5,1,1,1,1,1,1,1,1,finished,0,130,9.25,2026-11-08T16:54:04.236Z,2026-11-08T17:03:19.073Z,36.3834,117.3659,36.3834,,,https://cursor.com/agents/bc-72014ad4-9433-4bf0-823a-ae8737620848,migrate/practice-h2-errors,

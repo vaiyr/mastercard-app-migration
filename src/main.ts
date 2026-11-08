@@ -1,9 +1,9 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentUrl, runAgent } from "./agent.js";
 import { parseArgs } from "./cli.js";
 import { loadDotEnv, need } from "./env.js";
-import { fetchBranch, git, prepareFork, remoteBranchSha, sourceDiff } from "./fork.js";
+import { fetchBranch, prepareFork, remoteBranchSha, sourceDiff } from "./fork.js";
 import { gradeDiff, failedVerdict } from "./grade.js";
 import { emptyCost, eventsFrom, settledEvents, sumEvents } from "./ledger.js";
 import { captureMavenErrors } from "./maven.js";
@@ -44,7 +44,8 @@ async function gradeAttempt(input: {
     diffPath,
     target: input.target,
     logPath: path.join(input.dir, `grader${input.suffix}.log`),
-    official: process.env.GRADE_OFFICIAL === "1",
+    testsRequired: input.repo.tests,
+    baselineCache: path.join(path.dirname(path.dirname(input.dir)), "baselines"),
   });
 }
 
@@ -163,115 +164,15 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
   return report;
 }
 
-async function loadRunReports(runDir: string): Promise<Report[]> {
-  const reports: Report[] = [];
-  for (const entry of await readdir(runDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const text = await readFile(path.join(runDir, entry.name, "report.json"), "utf8").catch(() => "");
-    if (text) reports.push(JSON.parse(text) as Report);
-  }
-  if (reports.length === 0) throw new Error(`No report.json under ${runDir}`);
-  return reports;
-}
-
-/**
- * The retry lever on an earlier run: the agents that passed are copied over
- * unchanged, the agents that missed are resumed once with the failed checks.
- */
-async function retryOne(previous: Report, options: Options): Promise<Report> {
-  const runDir = path.join(options.out, options.name);
-  const dir = path.join(runDir, previous.repo);
-  await mkdir(dir, { recursive: true });
-  const repo: RepoRef = { name: previous.repo, url: previous.upstreamUrl, baseCommit: previous.baseCommit };
-  if (previous.verdict.maximal || previous.error) {
-    const copied: Report = { ...previous, run: options.name };
-    await writeReport(dir, copied);
-    await appendSummary(runDir, copied);
-    log(repo.name, previous.verdict.maximal ? "passed before, kept as is" : `skipped, earlier error: ${previous.error}`);
-    return copied;
-  }
-
-  const workRoot = path.join(options.out, "work", options.name);
-  const checkout = path.join(workRoot, repo.name);
-  await mkdir(workRoot, { recursive: true });
-  await git(["clone", "--quiet", "--no-tags", repo.url, checkout], workRoot).catch(() => undefined);
-  await git(["checkout", "--quiet", "--detach", repo.baseCommit], checkout);
-
-  const branchName = previous.branch ?? `migrate/${previous.run}`;
-  log(repo.name, "retry: sending the failed checks back to the same agent");
-  const retry = await runAgent(
-    {
-      forkUrl: previous.forkUrl,
-      startingRef: previous.harnessBranch ?? `harness/${previous.run}`,
-      setup: previous.setup,
-      model: previous.model,
-      name: `${previous.setup}-${previous.model.id}-${repo.name}`,
-      metadata: { run: options.name, setup: previous.setup, model: previous.model.id, repo: repo.name },
-      prompt: retryPrompt(previous.verdict, branchName),
-      budget: options.budget,
-      ndjsonPath: path.join(dir, "run.ndjson"),
-      branch: branchName,
-      target: previous.target,
-      branchPushed: async () => Boolean(await remoteBranchSha(previous.forkUrl, branchName, need("GITHUB_TOKEN"))),
-      resumeId: previous.agentId,
-    },
-    "retry",
-  );
-  log(repo.name, `retry ${retry.attempt.stopReason} in ${retry.attempt.minutes} min, ${retry.attempt.calls} calls`);
-  const branch = retry.attempt.branch ?? previous.branch;
-  const verdict = await gradeAttempt({ repo, checkout, forkUrl: previous.forkUrl, branch, target: previous.target, dir, suffix: "-retry" });
-  retry.attempt.verdict = verdict;
-  log(repo.name, `after retry: ${verdictWord(verdict)}`);
-  await retry.agent.close();
-
-  const attempts = [...previous.attempts, retry.attempt];
-  let cost = emptyCost();
-  try {
-    log(repo.name, "waiting for the usage ledger");
-    const events = await settledEvents(need("CURSOR_ADMIN_API_KEY"), previous.agentId, previous.startedAt, retry.attempt.endedAt);
-    cost = sumEvents(events);
-    const retryEvents = eventsFrom(events, retry.attempt.startedAt);
-    retry.attempt.cost = sumEvents(retryEvents);
-    attempts[0].cost = sumEvents(events.filter((event) => !retryEvents.includes(event)));
-  } catch (error) {
-    cost = emptyCost(error instanceof Error ? error.message : String(error));
-  }
-  const report: Report = {
-    ...previous,
-    run: options.name,
-    retry: true,
-    branch,
-    attempts,
-    calls: attempts.reduce((total, attempt) => total + attempt.calls, 0),
-    minutes: Number(attempts.reduce((total, attempt) => total + attempt.minutes, 0).toFixed(2)),
-    endedAt: retry.attempt.endedAt,
-    verdict,
-    cost,
-    error: retry.attempt.error ?? cost.error,
-  };
-  await writeReport(dir, report);
-  await appendSummary(runDir, report);
-  log(repo.name, `${verdict.maximal ? "PASS" : "fail"}, $${((cost.chargedCents ?? 0) / 100).toFixed(3)} total on this agent`);
-  return report;
-}
-
 async function main(): Promise<void> {
   loadDotEnv();
   const options = parseArgs(process.argv.slice(2));
-  for (const name of ["CURSOR_API_KEY", "CURSOR_ADMIN_API_KEY", "GITHUB_TOKEN", "FORK_OWNER", "MIGRATIONBENCH_DIR", "MIGRATIONBENCH_PYTHON", "JAVA17_HOME", "MAVEN_HOME"]) need(name);
+  for (const name of ["CURSOR_API_KEY", "CURSOR_ADMIN_API_KEY", "GITHUB_TOKEN", "FORK_OWNER", "JAVA17_HOME", "MAVEN_HOME"]) need(name);
   const reports: Report[] = [];
-  let work: Array<{ name: string; run: () => Promise<Report> }>;
-  if (options.retryRun) {
-    const previous = (await loadRunReports(options.retryRun)).filter((report) => !options.only || report.repo.includes(options.only));
-    const misses = previous.filter((report) => !report.verdict.maximal && !report.error).length;
-    process.stderr.write(`Run ${options.name}: retry of ${options.retryRun}, ${misses} of ${previous.length} agents get one more turn\n`);
-    work = previous.map((report) => ({ name: report.repo, run: () => retryOne(report, options) }));
-  } else {
-    const model = await pinModel(options.model);
-    const repos = await loadRepos(options.repos, options.only);
-    process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}, maven-errors=${options.mavenErrors}\n`);
-    work = repos.map((repo) => ({ name: repo.name, run: () => runOne(repo, options, model) }));
-  }
+  const model = await pinModel(options.model);
+  const repos = await loadRepos(options.repos, options.only);
+  process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}, maven-errors=${options.mavenErrors}\n`);
+  const work = repos.map((repo) => ({ name: repo.name, run: () => runOne(repo, options, model) }));
 
   const queue = [...work];
   const workers = Array.from({ length: Math.min(options.concurrency, queue.length) }, async () => {
