@@ -32,7 +32,10 @@ export function failureList(verdict: Verdict): string {
   if (verdict.r1 && !verdict.r2) {
     lines.push(`r2 FAIL: compiled classes have major versions ${verdict.classMajors.join(", ")}; every class must be 61 (Java 17).`);
   }
-  if (!verdict.r3) lines.push("r3 FAIL: the set of test methods changed. Restore every original test method.");
+  if (!verdict.r3) {
+    lines.push("r3 FAIL: the test files and test methods must be exactly the original set. No new files under src/test, no removed or renamed methods. Found:");
+    for (const change of verdict.testSetChanges ?? ["(details unavailable)"]) lines.push(`  ${change}`);
+  }
   if (!verdict.r4) {
     lines.push(`r4 FAIL: ${verdict.tests ?? "no"} tests ran; at least ${verdict.testsRequired} must run.`);
   }

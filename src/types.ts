@@ -50,6 +50,8 @@ export interface Verdict {
   diffApplied: boolean;
   /** Maven error lines when r1 failed. Diagnostics only; the retry prompt does not use them. */
   verifyErrors?: string[];
+  /** Why r3 failed: test files added or removed, methods added or removed. */
+  testSetChanges?: string[];
   official?: { maximal: boolean; minimal: boolean };
   agreesWithOfficial?: boolean;
   error?: string;

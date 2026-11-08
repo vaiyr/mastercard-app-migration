@@ -28,7 +28,7 @@ import git
 
 from migration_bench.common import eval_utils, git_repo, hash_utils, maven_utils, utils
 from migration_bench.eval import final_eval
-from migration_bench.lang.java.eval import parse_repo
+from migration_bench.lang.java.eval import parse_file, parse_repo
 
 LHS_BRANCH = final_eval.LHS_BRANCH
 
@@ -63,6 +63,36 @@ def error_lines(log: str, limit: int = 40) -> list[str]:
     return lines[:limit]
 
 
+def test_set_changes(root: str) -> list[str]:
+    """Why r3 failed, in words: test files added or removed, and methods added or removed per file."""
+    before = parse_repo.get_repo_test_files(root, LHS_BRANCH) or {}
+    after = parse_repo.get_repo_test_files(root) or {}
+    rel = lambda path: os.path.relpath(path, root)
+    changes = []
+    for path in sorted(set(after) - set(before)):
+        changes.append(f"added test file {rel(path)}")
+    for path in sorted(set(before) - set(after)):
+        changes.append(f"removed test file {rel(path)}")
+    for path in sorted(set(before) & set(after)):
+        lhs, rhs = before[path], after[path]
+        if lhs is None or rhs is None:
+            if lhs != rhs:
+                changes.append(f"{rel(path)} no longer parses as Java")
+            continue
+        if lhs == rhs:
+            continue
+        names = lambda nodes: {node[1][0] if node[0] == parse_file.METHOD else node[1] for node in nodes}
+        gone = sorted(names(lhs) - names(rhs))
+        new = sorted(names(rhs) - names(lhs))
+        if gone:
+            changes.append(f"{rel(path)}: removed or renamed {', '.join(gone)}")
+        if new:
+            changes.append(f"{rel(path)}: added {', '.join(new)}")
+        if not gone and not new:
+            changes.append(f"{rel(path)}: a method lost or gained its @Test annotation")
+    return changes
+
+
 def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -> dict:
     with tempfile.TemporaryDirectory() as root:
         local = git.Repo.clone_from(github_url, root)
@@ -92,6 +122,7 @@ def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -
         tests = hash_utils.get_num_test_cases(root, tests_run.stdout)
         r4 = required < 0 or (tests is not None and tests >= required)
         r3 = bool(parse_repo.same_repo_test_files(root, lhs_branch=LHS_BRANCH)[-1])
+        test_changes = [] if r3 else test_set_changes(root)
 
     return {
         "r1": r1, "r2": r2, "r3": r3, "r4": r4, "r5": r5,
@@ -102,6 +133,7 @@ def grade(github_url: str, base_commit: str, diff_file: str, class_major: int) -
         "trackedDependencies": tracked, "dependencyMisses": misses,
         "diffApplied": applied,
         "verifyErrors": verify_errors,
+        "testSetChanges": test_changes,
     }
 
 
