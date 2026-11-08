@@ -46,24 +46,22 @@ async function request(
   };
 }
 
-/** GitHub organization that receives private harness forks. */
-export const FORK_OWNER = "mastercard-app-migration";
-
-/** Unset uses the organization. Any other owner is rejected. */
+/** The reviewer's GitHub user, or an organization they can create repos in. */
 export function resolveForkOwner(configured: string | undefined = process.env.HARNESS_FORK_OWNER): string {
-  const owner = configured?.trim() || FORK_OWNER;
-  if (owner !== FORK_OWNER) {
-    throw new Error(`Fork owner must be ${FORK_OWNER}`);
+  const owner = configured?.trim();
+  if (!owner) {
+    throw new Error("Set HARNESS_FORK_OWNER to the GitHub user that will hold private forks");
   }
-  return FORK_OWNER;
+  return owner;
 }
 
-export function forkCloneUrl(name: string): string {
-  return `https://github.com/${FORK_OWNER}/${name}`;
+export function forkCloneUrl(owner: string, name: string): string {
+  return `https://github.com/${owner}/${name}`;
 }
 
-export function orgRepoCreatePath(): string {
-  return `/orgs/${FORK_OWNER}/repos`;
+/** A user account is created with POST /user/repos. An organization uses its own endpoint. */
+export function repoCreatePath(accountType: string, owner: string): string {
+  return accountType === "Organization" ? `/orgs/${owner}/repos` : "/user/repos";
 }
 
 export function newRepoBody(name: string): {
@@ -114,21 +112,35 @@ export async function makePrivate(
   return parsed.private !== true;
 }
 
+async function accountType(token: string, owner: string): Promise<string> {
+  const response = await request(token, "GET", `/users/${owner}`);
+  if (response.status !== 200) {
+    throw new Error(`Could not read GitHub account ${owner} (${response.status})`);
+  }
+  const body = JSON.parse(response.body) as { type?: string };
+  return body.type || "User";
+}
+
 export async function ensureRepo(
   token: string,
   owner: string,
   name: string,
 ): Promise<string> {
-  resolveForkOwner(owner);
-  const existing = await request(token, "GET", `/repos/${owner}/${name}`);
+  const forkOwner = resolveForkOwner(owner);
+  const existing = await request(token, "GET", `/repos/${forkOwner}/${name}`);
   if (existing.status === 200) {
-    await makePrivate(token, owner, name, existing.body);
-    return forkCloneUrl(name);
+    await makePrivate(token, forkOwner, name, existing.body);
+    return forkCloneUrl(forkOwner, name);
   }
-  const created = await request(token, "POST", orgRepoCreatePath(), newRepoBody(name));
+  const created = await request(
+    token,
+    "POST",
+    repoCreatePath(await accountType(token, forkOwner), forkOwner),
+    newRepoBody(name),
+  );
   if (created.status === 201) {
-    await makePrivate(token, owner, name, created.body);
-    return forkCloneUrl(name);
+    await makePrivate(token, forkOwner, name, created.body);
+    return forkCloneUrl(forkOwner, name);
   }
   const detail = created.permissions
     ? ` Missing permission: ${created.permissions}.`
