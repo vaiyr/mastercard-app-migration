@@ -85,6 +85,7 @@ export async function runAgent(input: AgentRunInput, kind: Attempt["kind"]): Pro
   let run: Run | undefined;
   let stopReason: Attempt["stopReason"] = "finished";
   let cancelled = false;
+  let budget = input.budget;
   const cancel = async (reason: Attempt["stopReason"]) => {
     if (cancelled) return;
     cancelled = true;
@@ -122,7 +123,7 @@ export async function runAgent(input: AgentRunInput, kind: Attempt["kind"]): Pro
       await write({ kind, at: new Date().toISOString(), event });
       if (event.type === "tool_call" && event.status === "running" && event.call_id) {
         calls.add(event.call_id);
-        if (calls.size >= input.budget) await cancel("budget");
+        if (calls.size >= budget) await cancel("budget");
       }
       if (Date.now() - started > MAX_MINUTES * 60_000) await cancel("timeout");
     }
@@ -143,6 +144,7 @@ export async function runAgent(input: AgentRunInput, kind: Attempt["kind"]): Pro
     if (!pushed) {
       nudged = true;
       cancelled = false;
+      budget = calls.size + 10;
       await write({ kind, at: new Date().toISOString(), note: `branch ${input.branch} not on the fork after the run; asking the agent to commit and push` });
       await consume(await agent.send(pushNudge(input.branch, input.target), { mcpServers: servers }));
       pushed = await input.branchPushed();
