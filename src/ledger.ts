@@ -19,7 +19,8 @@ export interface UsageEvent {
 }
 
 const PAD_BEFORE_MS = 60 * 60_000;
-const PAD_AFTER_MS = 6 * 60 * 60_000;
+/** Ledger events land within a few minutes of a run. A later turn on the same agent must not be counted. */
+const PAD_AFTER_MS = 15 * 60_000;
 
 export async function fetchUsageEvents(adminKey: string, agentId: string, startedAt: string, endedAt: string): Promise<UsageEvent[]> {
   const events: UsageEvent[] = [];
@@ -43,7 +44,8 @@ export async function fetchUsageEvents(adminKey: string, agentId: string, starte
     events.push(...(body.usageEvents ?? []));
     if (!body.pagination?.hasNextPage) break;
   }
-  return events;
+  const until = Date.parse(endedAt) + PAD_AFTER_MS;
+  return events.filter((event) => Number(event.timestamp) <= until);
 }
 
 export function emptyCost(error?: string): Cost {
