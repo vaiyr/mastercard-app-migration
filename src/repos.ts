@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import type { RepoRef } from "./types.js";
 
 /** Small RFC 4180 reader. Enough for the repo manifests in repos/. */
@@ -61,4 +63,17 @@ export async function loadRepos(csvPath: string, only?: string): Promise<RepoRef
     : repos;
   if (selected.length === 0) throw new Error(`No rows in ${csvPath} match ${only ?? "(all)"}`);
   return selected;
+}
+
+/** One repository from the command line. Without a commit, the current HEAD is pinned. */
+export async function repoFromArgs(url: string, base?: string): Promise<RepoRef> {
+  const clean = url.replace(/\/+$/, "").replace(/\.git$/, "");
+  const name = clean.split("/").pop() ?? "repo";
+  let baseCommit = base;
+  if (!baseCommit) {
+    const { stdout } = await promisify(execFile)("git", ["ls-remote", clean, "HEAD"], { timeout: 60_000 });
+    baseCommit = stdout.trim().split(/\s+/)[0];
+    if (!/^[0-9a-f]{40}$/i.test(baseCommit ?? "")) throw new Error(`Could not resolve HEAD of ${clean}`);
+  }
+  return { name, url: clean, baseCommit };
 }

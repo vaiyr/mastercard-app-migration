@@ -6,10 +6,11 @@ import { loadDotEnv, need } from "./env.js";
 import { fetchBranch, prepareFork, remoteBranchSha, sourceDiff } from "./fork.js";
 import { gradeDiff, failedVerdict } from "./grade.js";
 import { emptyCost, eventsFrom, settledEvents, sumEvents } from "./ledger.js";
+import { openPullRequest } from "./github.js";
 import { pinModel } from "./model.js";
-import { firstPrompt, retryPrompt } from "./prompts.js";
+import { firstPrompt, pullRequestBody, retryPrompt } from "./prompts.js";
 import { appendSummary, writeReport } from "./report.js";
-import { loadRepos } from "./repos.js";
+import { loadRepos, repoFromArgs } from "./repos.js";
 import type { Attempt, Options, PinnedModel, RepoRef, Report, Verdict } from "./types.js";
 
 function log(repo: string, message: string): void {
@@ -79,6 +80,7 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     metadata: { run: options.name, setup: options.setup, model: model.id, repo: repo.name },
     budget: options.budget,
     ndjsonPath,
+    onAgent: (url: string) => log(repo.name, `watch the agent at ${url}`),
   };
 
   log(repo.name, `starting ${model.id} agent`);
@@ -123,6 +125,26 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     cost = emptyCost(error instanceof Error ? error.message : String(error));
   }
 
+  let prUrl: string | undefined;
+  if (options.pr && verdict.maximal && branch) {
+    try {
+      prUrl = await openPullRequest(need("GITHUB_TOKEN"), need("FORK_OWNER"), repo.name, {
+        head: branch,
+        base: fork.harnessBranch,
+        title: `Migrate to Java ${options.target}`,
+        body: pullRequestBody({
+          setup: options.setup, model: model.id, target: options.target, verdict,
+          calls: attempts.reduce((total, attempt) => total + attempt.calls, 0),
+          minutes: Number(attempts.reduce((total, attempt) => total + attempt.minutes, 0).toFixed(1)),
+          cents: cost.chargedCents, agentUrl: agentUrl(first.agent.agentId), retried: attempts.length > 1,
+        }),
+      });
+      log(repo.name, `pull request ${prUrl}`);
+    } catch (error) {
+      log(repo.name, `pull request not opened: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const report: Report = {
     run: options.name,
     repo: repo.name,
@@ -138,6 +160,7 @@ async function runOne(repo: RepoRef, options: Options, model: PinnedModel): Prom
     agentId: first.agent.agentId,
     agentUrl: agentUrl(first.agent.agentId),
     branch,
+    prUrl,
     attempts,
     calls: attempts.reduce((total, attempt) => total + attempt.calls, 0),
     minutes: Number(attempts.reduce((total, attempt) => total + attempt.minutes, 0).toFixed(2)),
@@ -159,7 +182,7 @@ async function main(): Promise<void> {
   for (const name of ["CURSOR_API_KEY", "CURSOR_ADMIN_API_KEY", "GITHUB_TOKEN", "FORK_OWNER", "JAVA17_HOME", "MAVEN_HOME"]) need(name);
   const reports: Report[] = [];
   const model = await pinModel(options.model);
-  const repos = await loadRepos(options.repos, options.only);
+  const repos = options.repo ? [await repoFromArgs(options.repo, options.base)] : await loadRepos(options.repos!, options.only);
   process.stderr.write(`Run ${options.name}: ${options.setup}, ${model.id} ${JSON.stringify(model.params ?? [])}, ${repos.length} repo(s), retry=${options.retry}\n`);
   const work = repos.map((repo) => ({ name: repo.name, run: () => runOne(repo, options, model) }));
 

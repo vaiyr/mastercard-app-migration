@@ -33,6 +33,8 @@ export interface AgentRunInput {
   branchPushed: () => Promise<boolean>;
   /** Resume this agent instead of creating one (the retry path). */
   resumeId?: string;
+  /** Called with the agent's dashboard URL as soon as the agent exists. */
+  onAgent?: (url: string) => void;
 }
 
 export interface AgentRun {
@@ -75,6 +77,7 @@ export async function runAgent(input: AgentRunInput, kind: Attempt["kind"]): Pro
         },
       });
 
+  input.onAgent?.(agentUrl(agent.agentId));
   const stream = createWriteStream(input.ndjsonPath, { flags: "a" });
   const write = async (value: unknown) => {
     if (!stream.write(`${JSON.stringify(value)}\n`)) await once(stream, "drain");

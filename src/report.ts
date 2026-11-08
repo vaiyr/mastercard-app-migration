@@ -7,7 +7,7 @@ export const SUMMARY_COLUMNS = [
   "r1", "r2", "r3", "r4", "r5", "maximal", "r4_baseline",
   "stop_reason", "nudged", "calls", "minutes", "started_at", "ended_at",
   "charged_cents", "total_cents", "first_charged_cents", "retry_charged_cents",
-  "dependency_misses", "agent_url", "branch", "error",
+  "dependency_misses", "agent_url", "branch", "pr_url", "error",
 ] as const;
 
 function cell(value: unknown): string {
@@ -43,6 +43,7 @@ export function summaryRow(report: Report): string {
     dependency_misses: verdict.dependencyMisses.map((miss) => `${miss.dependency} ${miss.got ?? "?"}<${miss.expected ?? "?"}`).join("; "),
     agent_url: report.agentUrl,
     branch: report.branch,
+    pr_url: report.prUrl,
     error: report.error,
   };
   return SUMMARY_COLUMNS.map((column) => cell(values[column])).join(",");

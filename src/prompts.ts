@@ -54,3 +54,23 @@ export function retryPrompt(verdict: Verdict, branch: string): string {
 export function pushNudge(branch: string, target: string): string {
   return `Nothing has reached the remote branch ${branch}. Run exactly: git add -A; git commit -m "Migrate to Java ${target}"; git push origin HEAD:${branch}. Then stop. Do not change any file.`;
 }
+
+/** The pull request body: what was checked, what it cost, where the agent ran. */
+export function pullRequestBody(input: { setup: Setup; model: string; target: string; verdict: Verdict; calls: number; minutes: number; cents: number | null; agentUrl: string; retried: boolean }): string {
+  const v = input.verdict;
+  const mark = (ok: boolean) => (ok ? "pass" : "fail");
+  return [
+    `Java ${input.target} migration by a Cursor cloud agent (${input.model}, setup ${input.setup.toUpperCase()}${input.retried ? ", one verifier retry" : ""}).`,
+    "",
+    "| Check | Result |",
+    "| --- | --- |",
+    `| r1 \`mvn clean verify\` on Java ${input.target} | ${mark(v.r1)} |`,
+    `| r2 compiled class major ${v.classMajors.join(", ") || "?"} | ${mark(v.r2)} |`,
+    `| r3 test files and methods unchanged | ${mark(v.r3)} |`,
+    `| r4 tests run: ${v.tests ?? "?"}${v.testsRequired >= 0 ? ` (baseline ${v.testsRequired})` : " (no baseline)"} | ${mark(v.r4)} |`,
+    `| r5 ${v.trackedDependencies} tracked dependencies at latest major | ${mark(v.r5)} |`,
+    "",
+    `Agent: ${input.calls} tool calls, ${input.minutes} minutes, ${input.cents === null ? "cost pending" : `$${(input.cents / 100).toFixed(2)}`} charged. ${input.agentUrl}`,
+    input.setup === "h2" ? "The base branch already carries the pom version rewrite from `tools/bump_poms.py`; this diff is the agent's repair on top of it." : "",
+  ].filter((line) => line !== "").join("\n");
+}

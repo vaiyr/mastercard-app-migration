@@ -1,2 +1,0 @@
-run,repo,setup,model,retry,maven_errors,r1,r2,r3,r4,r5,maximal,stop_reason,nudged,calls,minutes,started_at,ended_at,charged_cents,total_cents,first_charged_cents,retry_charged_cents,dependency_misses,agent_url,branch,error
-demo-issuing-1,issuing-api-reference-app,h2,composer-2.5,1,0,1,1,1,1,1,1,finished+finished,0,43,2.3,2026-11-08T18:03:08.949Z,2026-11-08T18:05:46.360Z,8.8552,28.5652,3.4755,5.3797,,https://cursor.com/agents/bc-bfe1264c-9d5d-44f9-a1f1-0a226a78eedd,migrate/demo-issuing-1,

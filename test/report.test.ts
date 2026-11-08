@@ -7,7 +7,7 @@ test("a report becomes one csv row with every column", () => {
   const report: Report = {
     run: "r", repo: "a", upstreamUrl: "u", baseCommit: "b", forkUrl: "f", harnessCommit: "h",
     setup: "h2", model: { id: "composer-2.5" }, target: "17", retry: true,
-    agentId: "bc-1", agentUrl: "https://cursor.com/agents/bc-1", branch: "cursor/x",
+    agentId: "bc-1", agentUrl: "https://cursor.com/agents/bc-1", branch: "cursor/x", prUrl: "https://github.com/o/a/pull/1",
     attempts: [
       { kind: "first", stopReason: "finished", startedAt: "s", endedAt: "e", minutes: 3, calls: 20, cost: { chargedCents: 3.4, totalCents: 5, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, events: 2 } },
       { kind: "retry", stopReason: "finished", startedAt: "s2", endedAt: "e2", minutes: 2, calls: 10, cost: { chargedCents: 6.4, totalCents: 8, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, events: 3 } },
@@ -20,4 +20,5 @@ test("a report becomes one csv row with every column", () => {
   assert.equal(cells.length, SUMMARY_COLUMNS.length);
   assert.equal(cells[SUMMARY_COLUMNS.indexOf("maximal")], "1");
   assert.equal(cells[SUMMARY_COLUMNS.indexOf("retry_charged_cents")], "6.4");
+  assert.equal(cells[SUMMARY_COLUMNS.indexOf("pr_url")], "https://github.com/o/a/pull/1");
 });

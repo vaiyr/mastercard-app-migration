@@ -3,9 +3,14 @@ export type Setup = "h1" | "h2";
 export interface Options {
   setup: Setup;
   model: string;
-  repos: string;
+  /** Batch manifest, or one repository given on the command line. */
+  repos?: string;
+  repo?: string;
+  base?: string;
   only?: string;
   retry: boolean;
+  /** Open a pull request on the fork when the migration passes. */
+  pr: boolean;
   concurrency: number;
   budget: number;
   target: "17" | "21";
@@ -98,6 +103,7 @@ export interface Report {
   agentId: string;
   agentUrl: string;
   branch?: string;
+  prUrl?: string;
   attempts: Attempt[];
   calls: number;
   minutes: number;

@@ -5,7 +5,7 @@ import type { Setup } from "./types.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const HARNESS_DIR = path.join(ROOT, "harness");
-export const VERSIONS_FILE = path.join(ROOT, "repos", "versions.json");
+export const VERSIONS_FILE = path.join(ROOT, "grader", "dependency_version.json");
 
 /** Paths the grader never sees: what the harness adds to a fork, and build output an agent may commit. */
 export const EXCLUDED_PATHS = [".cursor", "AGENTS.md", "tools", "target", "**/target"] as const;
