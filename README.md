@@ -1,10 +1,10 @@
-# Cloud Agents for Payment Security: Migrating Mastercard reference apps from Java 8 to 17
+# Migrating Mastercard Apps with Cursor Cloud Agents
 
 <p align="center">
   <img src="results/figures/fleet.png" alt="Every Mastercard reference app not yet on Java 17, two setups, two models: one dot per app at its cost, filled when all five checks passed."/>
 </p>
 
-Mastercard's client-library policy says Java 17 and above. Of its 56 public Java repositories, 32 still build on Java 7, 8 or 11. This harness forks each one, hands it to a Cursor cloud agent with a pinned set of instructions and tools, and grades the branch the agent pushes with five checks.
+Of Mastercard's 56 public Java repositories, 32 still build on Java 7, 8 or 11. This harness forks each one, hands it to a Cursor cloud agent with a pinned set of instructions and tools, and grades the branch the agent pushes with five checks.
 
 ## How a run works
 
